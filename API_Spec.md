@@ -5,10 +5,10 @@
 | 文档定位 | 接口与字段基线 |
 | -------- | -------------- |
 | 适用范围 | 用户侧 / 管理员侧 / 内部服务侧 / runtime manager 内部接口 |
-| 修订重点 | 删去对普通用户暴露的 gateway-config；补充 task 状态机；引入 browserUrl / internalEndpoint 与 retentionPolicy；补齐管理员接口；拆清 `/runtime` 与 `/runtime/status`；补齐首次 binding 初始化接口 |
+| 修订重点 | 采用“用户只用、不配置”模式；移除普通用户侧凭据与模型绑定接口；保留工作区入口与最小状态接口；增强管理员模型、凭据与用量治理接口；继续冻结 `browserUrl` / `internalEndpoint` / `retentionPolicy` |
 | 响应原则 | 所有响应均采用 JSON；字段名直接作为开发基线，不再自行改名 |
 
-**接口修订摘要**：普通用户侧不再暴露 `/api/v1/models/gateway-config`；工作区入口改为返回 `browserUrl`；runtime binding 与 runtime-manager 启动接口新增 `volumeId / imageRef / routeHost / configMount / retentionPolicy / lastError` 等关键字段；disabled 用户除 `/api/v1/auth/me` 外访问业务接口统一返回 `403 USER_DISABLED`；新增管理员详情类接口；新增内部 `runtime-binding/ensure` 接口，明确首次 binding 由模块 2 初始化。
+**接口修订摘要**：普通用户侧不再暴露 `/api/v1/models/bindings`、`/api/v1/models/{modelId}/binding`、`/api/v1/credentials*` 等自配置接口；工作区入口继续返回 `browserUrl`；runtime binding 与 runtime-manager 启动接口继续包含 `volumeId / imageRef / routeHost / configMount / retentionPolicy / lastError` 等关键字段；disabled 用户除 `/api/v1/auth/me` 外访问业务接口统一返回 `403 USER_DISABLED`；管理员侧新增 provider 凭据治理和全局模型配置能力；内部 `runtime-binding/ensure` 继续作为首次 binding 初始化接口。
 
 # 1. 通用响应约定
 
@@ -30,14 +30,13 @@
 | 401 | UNAUTHENTICATED | 未登录或 token 无效。 |
 | 403 | ACCESS_DENIED | 权限不足。 |
 | 403 | USER_DISABLED | 用户已禁用。 |
-| 403 | CREDENTIAL_ACCESS_DENIED | 无权操作该凭据。 |
 | 404 | USER_NOT_FOUND | 用户不存在。 |
 | 404 | RUNTIME_NOT_FOUND | runtime 不存在。 |
 | 404 | MODEL_NOT_FOUND | 模型不存在。 |
-| 404 | CREDENTIAL_NOT_FOUND | 凭据不存在。 |
+| 404 | PROVIDER_CREDENTIAL_NOT_FOUND | 平台 provider 凭据不存在。 |
 | 409 | RUNTIME_ACTION_CONFLICT | runtime 正忙或状态冲突。 |
 | 422 | QUOTA_EXCEEDED | 超出 quota。 |
-| 422 | CREDENTIAL_INVALID | 凭据校验失败或不可用。 |
+| 422 | PROVIDER_CREDENTIAL_INVALID | 平台 provider 凭据校验失败或不可用。 |
 | 500/502 | *_ERROR | 内部模块或上游错误。 |
 
 # 3. 接口总览（修订后）
@@ -53,21 +52,19 @@
 | POST | /api/v1/users/me/runtime/stop | 停止 runtime | 用户 |
 | DELETE | /api/v1/users/me/runtime | 删除 runtime | 用户 |
 | GET | /api/v1/runtime/tasks/{taskId} | 查询 runtime 任务状态 | 用户 / admin |
-| GET | /api/v1/models | 获取当前用户可见模型列表 | 用户 |
-| GET | /api/v1/models/bindings | 获取当前用户模型绑定关系 | 用户 |
-| PUT | /api/v1/models/{modelId}/binding | 设置某模型的凭据绑定 | 用户 |
-| GET | /api/v1/credentials | 获取当前用户凭据列表 | 用户 |
-| POST | /api/v1/credentials | 新增用户凭据 | 用户 |
-| POST | /api/v1/credentials/{credentialId}/verify | 验证用户凭据 | 用户 |
-| DELETE | /api/v1/credentials/{credentialId} | 删除用户凭据 | 用户 |
-| GET | /api/v1/usage/summary | 获取当前用户用量摘要 | 用户 |
+| GET | /api/v1/models | 获取当前用户可见模型列表（只读） | 用户 |
+| GET | /api/v1/usage/summary | 获取当前用户最小用量摘要（只读） | 用户 |
 | GET | /api/v1/workspace-entry | 获取当前用户工作区入口 | 用户 |
 | GET | /api/v1/admin/users | 获取用户列表 | admin |
 | GET | /api/v1/admin/users/{userId} | 获取用户详情 | admin |
 | PATCH | /api/v1/admin/users/{userId}/status | 启用 / 禁用用户 | admin |
 | GET | /api/v1/admin/users/{userId}/runtime | 获取指定用户 runtime 详情 | admin |
-| GET | /api/v1/admin/users/{userId}/credentials | 获取指定用户凭据元数据与状态 | admin |
 | GET | /api/v1/admin/models | 获取全局模型列表与策略 | admin |
+| PUT | /api/v1/admin/models/{modelId} | 更新模型开关、可见性与默认策略 | admin |
+| GET | /api/v1/admin/provider-credentials | 获取平台 provider 凭据列表与状态 | admin |
+| POST | /api/v1/admin/provider-credentials | 新增平台 provider 凭据 | admin |
+| POST | /api/v1/admin/provider-credentials/{credentialId}/verify | 校验平台 provider 凭据 | admin |
+| DELETE | /api/v1/admin/provider-credentials/{credentialId} | 删除平台 provider 凭据 | admin |
 | GET | /api/v1/admin/usage/summary | 获取全局 usage 汇总 | admin |
 | POST | /internal/users/sync | 首次登录同步 / 创建用户 | internal |
 | POST | /internal/users/{userId}/runtime-binding/ensure | 确保 runtime binding 存在；首次创建时由模块 2 分配 `runtimeId / volumeId / default imageRef` | internal |
@@ -93,7 +90,7 @@ GET `/api/v1/auth/me`，返回 `authenticated` 与 `user` 信息，包含 `userI
 
 GET `/api/v1/users/me/runtime`。
 
-**用途边界**：返回完整的 `UserRuntimeBinding` 快照，用于详情展示、配置页、删除确认页、后台排障等需要完整字段的场景；字段相对稳定，不建议作为高频轮询接口。
+**用途边界**：返回完整的 `UserRuntimeBinding` 快照，用于详情展示、删除确认页、排障场景；字段相对稳定，不建议作为高频轮询接口。
 
 | 字段 | 说明 |
 | ---- | ---- |
@@ -157,18 +154,20 @@ GET `/api/v1/runtime/tasks/{taskId}`。
 | status | `pending / running / succeeded / failed / canceled`。 |
 | message | 任务说明。 |
 
-## 4.7 获取模型列表与绑定
+## 4.7 获取模型列表（只读）
 
-GET `/api/v1/models` 返回当前用户可见模型列表及绑定来源。GET `/api/v1/models/bindings` 返回模型与凭据的实际绑定关系。
+GET `/api/v1/models` 返回当前用户可见模型列表，仅用于告知用户当前工作区能使用哪些平台提供的模型服务。
 
-**修订点**：普通用户侧不再提供 `/api/v1/models/gateway-config`；runtime 所需 gateway-config 改由 internal 接口提供给模块 3。
+**修订点**：
 
-## 4.8 凭据与用量摘要
+- 普通用户侧不再提供 `/api/v1/models/bindings`。
+- 普通用户侧不再提供 `/api/v1/models/{modelId}/binding`。
+- 普通用户侧不再提供任何 provider 凭据管理接口。
+- runtime 所需 gateway-config 仅由 internal 接口提供给模块 3。
 
-- GET `/api/v1/credentials`：只返回凭据元数据，不返回明文 key。
-- POST `/api/v1/credentials`：创建时 `secret` 仅在请求体中出现一次，落入 secret store 后不再返回。
-- POST `/api/v1/credentials/{credentialId}/verify`：返回 `verified / status` 与 `lastValidatedAt`。
-- GET `/api/v1/usage/summary`：展示当前用户 `usage summary`。
+## 4.8 获取当前用户最小用量摘要
+
+GET `/api/v1/usage/summary`：用于展示当前用户最小 usage summary，只读，不承载计费和治理逻辑。
 
 ## 4.9 获取工作区入口
 
@@ -210,14 +209,21 @@ PATCH `/api/v1/admin/users/{userId}/status`：`status` 仅允许 `active / disab
 
 GET `/api/v1/admin/users/{userId}/runtime`：可查看 runtime 的 `desiredState / observedState / browserUrl / internalEndpoint / lastError / volumeId / imageRef / retentionPolicy`。
 
-## 5.5 获取指定用户凭据元数据与状态
+## 5.5 获取与维护全局模型策略
 
-GET `/api/v1/admin/users/{userId}/credentials`：仅返回凭据元数据和状态，不返回明文 key。
+- GET `/api/v1/admin/models`：提供全局模型列表、开关、可见性与默认策略信息。
+- PUT `/api/v1/admin/models/{modelId}`：修改模型是否启用、是否对普通用户可见、默认路由与最小策略配置。
 
-## 5.6 获取全局模型与用量汇总
+## 5.6 获取与维护平台 provider 凭据
 
-- GET `/api/v1/admin/models`：提供全局模型列表、开关与最小策略信息。
-- GET `/api/v1/admin/usage/summary`：提供平台 `usage` 汇总，不等于费用结算。
+- GET `/api/v1/admin/provider-credentials`：返回平台托管的 provider 凭据元数据与状态，不返回明文 key。
+- POST `/api/v1/admin/provider-credentials`：创建平台 provider 凭据，`secret` 仅在请求体中出现一次，落入 secret store 后不再返回。
+- POST `/api/v1/admin/provider-credentials/{credentialId}/verify`：校验平台 provider 凭据有效性，返回 `verified / status / lastValidatedAt`。
+- DELETE `/api/v1/admin/provider-credentials/{credentialId}`：删除平台 provider 凭据。
+
+## 5.7 获取全局 usage 汇总
+
+GET `/api/v1/admin/usage/summary`：提供平台 `usage` 汇总，不等于费用结算。
 
 # 6. 内部服务接口
 
@@ -296,12 +302,11 @@ POST `/internal/runtime-manager/containers/ensure-running`。
 
 # 8. 前端联调建议
 
-- 工作台首页初始化顺序：`/auth/me -> /users/me/runtime -> /models -> /credentials -> /usage/summary`。
+- 用户工作台首页初始化顺序：`/auth/me -> /users/me/runtime/status -> /models -> /usage/summary`。
 - 需要高频刷新 runtime 状态时，优先调 `/users/me/runtime/status`，不要高频轮询 `/users/me/runtime`。
 - 点击启动 runtime：`POST /users/me/runtime/start -> 轮询 /runtime/tasks/{taskId} -> 刷新 /users/me/runtime/status`。
 - 进入工作区前先调 `/workspace-entry`；`ready=true` 才跳转到 `browserUrl`。
-- 新增凭据后，先 `/verify`，再通过 `/models/{modelId}/binding` 切换。
-- 管理后台初始化：`/admin/users -> /admin/models -> /admin/usage/summary`；用户详情页再补 `/admin/users/{userId}`、`/admin/users/{userId}/runtime` 与 `/admin/users/{userId}/credentials`。
+- 管理后台初始化：`/admin/users -> /admin/models -> /admin/provider-credentials -> /admin/usage/summary`；用户详情页再补 `/admin/users/{userId}` 与 `/admin/users/{userId}/runtime`。
 
 # 9. 字段冻结清单
 
@@ -312,8 +317,9 @@ POST `/internal/runtime-manager/containers/ensure-running`。
 | 地址混用 | 不要再用一个 `endpoint` 同时表示 `browserUrl` 和 `internalEndpoint`。 |
 | binding 责任漂移 | 不要让模块 3 或前端直接生成 `runtimeId / volumeId / default imageRef`；首次初始化统一由模块 2 的 `runtime-binding/ensure` 完成。 |
 | 接口角色混用 | `/users/me/runtime` 是完整 binding；`/users/me/runtime/status` 是轻量轮询投影；不要混用或返回同一套超集字段。 |
+| 用户侧越权配置 | 不要重新向普通用户开放 provider 凭据管理、模型绑定管理和 gateway-config 读取能力。 |
 | 凭据误解 | `gatewayAccessTokenRef` 是内部引用，不是上游 provider key，也不是直接返回给浏览器的 token。 |
 | 删除语义漂移 | 删除 runtime 时必须遵守 `retentionPolicy`，不得在无说明情况下清空工作区。 |
 | disabled 语义漂移 | disabled 用户除 `/api/v1/auth/me` 外访问业务接口统一返回 `403 USER_DISABLED`。 |
 
-v 0.2
+v 0.3
