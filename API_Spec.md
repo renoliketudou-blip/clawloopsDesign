@@ -319,6 +319,6 @@ POST `/internal/runtime-manager/containers/ensure-running`。
 | 删除语义漂移 | 删除 runtime 时必须遵守 `retentionPolicy`，不得在无说明情况下清空工作区。 |
 | disabled 语义漂移 | disabled 用户除 `/api/v1/auth/me` 外访问业务接口统一返回 `403 USER_DISABLED`。 |
 
-v 0.3
+v 0.4
 reno 
-2026-03-13 17:59
+2026-03-16 14:04
