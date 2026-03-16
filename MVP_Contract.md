@@ -8,7 +8,7 @@
 | 变更重点 | 采用“用户只使用，管理员提供服务”模式；冻结 UserRuntimeBinding / 任务状态机 / `browserUrl` / `internalEndpoint`、禁用与删除语义，并补齐首次 binding 初始化边界与 workspace 前置鉴权模型 |
 | 本版原则 | 先上线、后演进；能并行开发、能稳定联调、能支持首版发布 |
 
-**边界声明**：本契约覆盖 MVP 必需能力：能登录、能识别用户、能拉起 runtime、能让用户进入工作区、能展示平台开放模型、能由管理员托管平台凭据、能提供最小 usage summary、能做最小治理。复杂多租户、复杂共享空间、复杂费用管理以及普通用户自助模型配置不纳入本版基线。
+**边界声明**：本契约覆盖 MVP 必需能力：能登录、能识别用户、能拉起 runtime、能让用户进入工作区、能展示平台开放模型、能由管理员托管平台凭据、能提供管理员侧 usage summary、能做最小治理。复杂多租户、复杂共享空间、复杂费用管理以及普通用户自助模型配置不纳入本版基线。
 
 ## 1. MVP 总体原则
 
@@ -72,7 +72,7 @@
 | 模块 3：Runtime 编排 | 提供 `ensure_running / stop / delete / inspect`；先向模块 2 确保 binding 存在；生成启动模板；调用 runtime manager；回写状态。 |
 | 模块 4：模型接入、平台凭据代理与用量归集 | 维护平台模型服务、托管平台 provider 凭据、内部生成 gateway-config、归集 usage summary。 |
 | 模块 5：管理后台 | 用户治理、runtime 查看、模型开关、provider 凭据管理、usage summary。 |
-| 模块 6：用户工作台 | 展示用户信息、runtime 状态、只读模型列表、最小 usage summary、工作区入口。 |
+| 模块 6：用户工作台 | 展示用户信息、runtime 状态、只读模型列表、工作区入口。 |
 
 ## 5. 关键跨模块规则
 
@@ -87,7 +87,7 @@
 | disabled 收口 | 除 `/api/v1/auth/me` 外，disabled 用户访问业务接口统一返回 `403 USER_DISABLED`；`/workspace-entry` 不再返回 `ready=false`。 |
 | 删除语义 | 删除 runtime 时必须显式携带 `retentionPolicy`；MVP 默认 `preserve_workspace`。 |
 | 本地 profile | runtime 保留本地 profile，但首次进入由平台自动创建并映射。 |
-| 用量口径 | MVP 展示口径以 OpenClaw 上报为主；管理员侧承担平台汇总与治理视角。 |
+| 用量口径 | MVP 以 OpenClaw 上报为主；平台仅向管理员侧提供 usage 汇总与治理视角。 |
 
 ## 6. 各模块详细定义（修订要点）
 
@@ -118,7 +118,7 @@
 - 平台默认模型对新用户开箱即用。
 - 平台统一管理 provider 凭据，普通用户不可读取也不可维护 provider 明文 key。
 - `gateway-config` 为 internal only，并通过文件 + secret 注入 runtime。
-- 归集平台 usage summary，向管理员提供治理视角，向用户提供最小只读视图。
+- 归集平台 usage summary，仅向管理员提供治理视角，不向普通用户提供 usage 视图。
 
 ### 6.5 模块 5：管理后台
 
@@ -162,6 +162,6 @@
 - 复杂灰度升级、自动迁移和弹性扩缩容。
 
 
-v 0.3
+v 0.4
 reno 
-2026-03-13 17:59
+2026-03-16 14:04

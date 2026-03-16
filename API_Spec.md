@@ -21,7 +21,8 @@
 | 权限约定 | 用户侧接口依赖当前登录用户；管理员侧接口仅 `admin` 可访问；internal 接口仅服务间访问。 |
 | disabled 语义 | 除 `/api/v1/auth/me` 外，disabled 用户访问业务接口统一返回 `403 USER_DISABLED`；`/api/v1/workspace-entry` 不再使用 `ready=false, reason=user_disabled`。 |
 | workspace 访问 | `browserUrl` 仅是工作区入口地址；实际访问仍统一经过 Traefik + Authentik 前置鉴权。 |
-| usage 口径 | MVP 展示以 OpenClaw 上报为主；后续审计 / 计费以网关记录为准。 |
+| usage 口径 | MVP 由 OpenClaw 上报 usage 记录；管理员侧展示以平台汇总为主，后续审计 / 计费以网关记录为准。 |
+
 
 # 2. 统一错误码
 
@@ -53,7 +54,6 @@
 | DELETE | /api/v1/users/me/runtime | 删除 runtime | 用户 |
 | GET | /api/v1/runtime/tasks/{taskId} | 查询 runtime 任务状态 | 用户 / admin |
 | GET | /api/v1/models | 获取当前用户可见模型列表（只读） | 用户 |
-| GET | /api/v1/usage/summary | 获取当前用户最小用量摘要（只读） | 用户 |
 | GET | /api/v1/workspace-entry | 获取当前用户工作区入口 | 用户 |
 | GET | /api/v1/admin/users | 获取用户列表 | admin |
 | GET | /api/v1/admin/users/{userId} | 获取用户详情 | admin |
@@ -165,9 +165,6 @@ GET `/api/v1/models` 返回当前用户可见模型列表，仅用于告知用�
 - 普通用户侧不再提供任何 provider 凭据管理接口。
 - runtime 所需 gateway-config 仅由 internal 接口提供给模块 3。
 
-## 4.8 获取当前用户最小用量摘要
-
-GET `/api/v1/usage/summary`：用于展示当前用户最小 usage summary，只读，不承载计费和治理逻辑。
 
 ## 4.9 获取工作区入口
 
@@ -302,7 +299,7 @@ POST `/internal/runtime-manager/containers/ensure-running`。
 
 # 8. 前端联调建议
 
-- 用户工作台首页初始化顺序：`/auth/me -> /users/me/runtime/status -> /models -> /usage/summary`。
+- 用户工作台首页初始化顺序：`/auth/me -> /users/me/runtime/status -> /models`。
 - 需要高频刷新 runtime 状态时，优先调 `/users/me/runtime/status`，不要高频轮询 `/users/me/runtime`。
 - 点击启动 runtime：`POST /users/me/runtime/start -> 轮询 /runtime/tasks/{taskId} -> 刷新 /users/me/runtime/status`。
 - 进入工作区前先调 `/workspace-entry`；`ready=true` 才跳转到 `browserUrl`。
@@ -323,3 +320,5 @@ POST `/internal/runtime-manager/containers/ensure-running`。
 | disabled 语义漂移 | disabled 用户除 `/api/v1/auth/me` 外访问业务接口统一返回 `403 USER_DISABLED`。 |
 
 v 0.3
+reno 
+2026-03-13 17:59

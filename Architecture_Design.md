@@ -10,7 +10,7 @@
 
 ### 本次修订摘要
 
-MVP 明确采用“管理员提供服务、用户只使用”的团队平台模式；普通用户不再管理 provider 凭据、不再切换模型绑定、不再进行复杂配置；平台统一提供默认模型服务与网关访问；管理员侧负责模型可见性、上游凭据、平台级 usage summary 与用户治理；UserRuntimeBinding 继续包含 `volumeId`、`imageRef`、`browserUrl`、`internalEndpoint`、`retentionPolicy`、`lastError`；runtime 启动仍由模块 3 先渲染配置文件与 secret file，再交由 runtime manager 挂载；统一入口继续采用 Traefik 子域名路由，并由 Authentik 对 workspace 子域名做前置鉴权；首次启动时由模块 2 负责初始化 UserRuntimeBinding 并分配 `runtimeId / volumeId / default imageRef`。
+MVP 明确采用“管理员提供服务、用户只使用”的团队平台模式；普通用户不再管理 provider 凭据、不再切换模型绑定、不再进行复杂配置；平台统一提供默认模型服务与网关访问；管理员侧负责模型可见性、上游凭据、平台级 usage summary 与用户治理；普通用户侧不提供 usage 统计展示。；UserRuntimeBinding 继续包含 `volumeId`、`imageRef`、`browserUrl`、`internalEndpoint`、`retentionPolicy`、`lastError`；runtime 启动仍由模块 3 先渲染配置文件与 secret file，再交由 runtime manager 挂载；统一入口继续采用 Traefik 子域名路由，并由 Authentik 对 workspace 子域名做前置鉴权；首次启动时由模块 2 负责初始化 UserRuntimeBinding 并分配 `runtimeId / volumeId / default imageRef`。
 
 ## 1. 目标与范围
 
@@ -25,7 +25,7 @@ MVP 不追求复杂多租户能力，不做复杂共享空间 UI，不实现复�
 | 隔离边界 | 采用每用户一个 runtime 容器的容器级隔离，不宣称强安全沙箱级隔离。 |
 | 模型治理 | 提供统一模型网关、平台默认模型、平台托管上游 provider 凭据。 |
 | 用户配置 | 普通用户只启动并使用自己的 OpenClaw workspace，不管理模型、凭据和绑定。 |
-| 费用管理 | MVP 不做复杂费用结算；用量以管理员侧 usage summary 为主，用户侧仅保留最小可见性。 |
+| 费用管理 | MVP 不做复杂费用结算；用量仅保留管理员侧 usage summary 视图。 |
 
 ## 2. 整体架构
 
@@ -117,7 +117,7 @@ MVP 不追求复杂多租户能力，不做复杂共享空间 UI，不实现复�
 - 平台统一托管上游 provider 凭据；普通用户与 runtime 均不直接接触 provider 明文 API Key。
 - 普通用户不管理模型绑定、不上传 provider 凭据；管理员负责平台模型开关、默认模型路由与 provider 凭据维护。
 - runtime 在启动后通过挂载的配置文件知道 `baseUrl`、可见模型与默认路由；通过挂载的 secret file 使用网关访问令牌。
-- MVP 展示口径以 OpenClaw 上报的 usage 为主；管理员侧保留平台汇总口径，用户侧仅保留最小必要可见性。
+- MVP 展示口径以 OpenClaw 上报的 usage 为主；平台仅向管理员侧提供汇总口径，普通用户侧不展示 usage 统计。
 
 ## 8. 用户禁用、删除与收口语义
 
@@ -172,6 +172,6 @@ MVP 不追求复杂多租户能力，不做复杂共享空间 UI，不实现复�
 - 必要时的 OpenClaw fork / patch 深度定制。
 
 
-v 0.3
+v 0.4
 reno 
-2026-03-13 17:59
+2026-03-16 14:04
