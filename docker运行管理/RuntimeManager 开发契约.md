@@ -427,3 +427,7 @@ runtimeManager 不能靠“猜名字”找容器，必须靠 label。
   "status": "ready"
 }
 ```
+
+v 0.1
+reno 
+2026-03-19 16:46

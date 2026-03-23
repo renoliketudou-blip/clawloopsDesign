@@ -750,3 +750,7 @@ POST `/internal/runtime-manager/containers/ensure-running`
 
 这样一来，首版就可以在不改上游源码的情况下，把 Authentik 真正接成你的统一身份层，而不是停留在“文档里提到过 Authentik”这一层。
 
+
+v 0.5
+reno 
+2026-03-23 10:04

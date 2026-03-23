@@ -38,3 +38,8 @@
 - CrewClaw 再根据 invitation 元数据绑定 workspace / role。
 
 这样最贴近你的业务目标，也最符合官方 Authentik 的能力边界。
+
+
+v 0.5
+reno 
+2026-03-23 10:04
