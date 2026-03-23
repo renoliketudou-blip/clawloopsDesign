@@ -244,7 +244,7 @@ interface InvitationPreviewVM {
 ```json
 {
   "status": "accepted",
-  "redirectUrl": "https://auth.example.com/if/flow/crewclaw-invitation-enrollment/?itoken=xxxx"
+  "redirectUrl": "https://auth.example.com/if/flow/clawloops-invitation-enrollment/?itoken=xxxx"
 }
 ```
 
@@ -383,10 +383,10 @@ interface InvitationDetailVM {
   "runtime": {
     "runtimeId": "rt_001",
     "volumeId": "vol_001",
-    "imageRef": "crewclaw-runtime-wrapper:openclaw-1.0.0",
+    "imageRef": "clawloops-runtime-wrapper:openclaw-1.0.0",
     "desiredState": "running",
     "observedState": "running",
-    "browserUrl": "https://u-001.crewclaw.example.com",
+    "browserUrl": "https://u-001.clawloops.example.com",
     "retentionPolicy": "preserve_workspace",
     "lastError": null
   }

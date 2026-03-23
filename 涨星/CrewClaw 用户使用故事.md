@@ -1,9 +1,9 @@
 1. 用户第一次接触系统
 1.1 用户访问平台首页
 
-用户打开 CrewClaw 平台域名，例如：
+用户打开 ClawLoops 平台域名，例如：
 
-https://crewclaw.example.com
+https://clawloops.example.com
 
 这时他看到的不是一堆配置项，而是一个很明确的入口：登录进入平台。
 
@@ -25,7 +25,7 @@ https://crewclaw.example.com
 
 模块 1 调用 /internal/users/sync
 
-模块 2 发现这是首次登录用户，于是自动创建 CrewClaw 平台用户记录
+模块 2 发现这是首次登录用户，于是自动创建 ClawLoops 平台用户记录
 
 用户被赋予默认 tenantId=t_default
 
@@ -157,7 +157,7 @@ volumeId
 
 容器起来后，Traefik 激活该用户的子域名路由，比如：
 
-https://u-001.crewclaw.example.com
+https://u-001.clawloops.example.com
 
 但这个地址不是匿名公开地址，它会被 Authentik 前置鉴权保护。
 

@@ -1,4 +1,4 @@
-# CrewClaw 平台 MVP 开发基线总契约（Authentik 接入版，冻结修订）
+# ClawLoops 平台 MVP 开发基线总契约（Authentik 接入版，冻结修订）
 
 统一 1 到 6 模块在“官方 Authentik 首版接入”条件下的职责边界、字段约定、状态枚举、错误码和联调流程。
 
@@ -33,7 +33,7 @@
 
 | 字段 | 说明 |
 | --- | --- |
-| userId | CrewClaw 平台内部用户唯一标识，例如 `u_001` |
+| userId | ClawLoops 平台内部用户唯一标识，例如 `u_001` |
 | subjectId | 外部身份唯一标识，例如 `authentik:12345` |
 | tenantId | MVP 固定为 `t_default` |
 | role | `user / admin` |
@@ -110,7 +110,7 @@
 `browserUrl` 能否真正返回给前端，不仅取决于 runtime 状态，也取决于：
 
 1. 当前请求已通过 Authentik 前置鉴权；
-2. 当前 CrewClaw 用户状态为 `active`；
+2. 当前 ClawLoops 用户状态为 `active`；
 3. 当前用户已具备合法 workspace 绑定；
 4. 当前 runtime 属于该用户；
 5. 当前入口接口返回 `ready=true`。
@@ -144,9 +144,9 @@
 
 **冻结原则**：
 
-- Invitation 是 CrewClaw 的业务对象；
+- Invitation 是 ClawLoops 的业务对象；
 - Authentik invitation 只是身份层执行引用；
-- `workspaceId / role / status` 以 CrewClaw 为真相；
+- `workspaceId / role / status` 以 ClawLoops 为真相；
 - `expired` 仅通过 `expiresAt < now>` 派生；
 - `用户创建 / 密码设置 / 会话建立` 以 Authentik 为真相。
 
@@ -170,8 +170,8 @@
 ### 6.1 统一身份归属
 
 - 身份认证由 Authentik 负责。
-- CrewClaw 不自行校验用户密码。
-- CrewClaw 只消费 Authentik 已认证后的会话与身份上下文。
+- ClawLoops 不自行校验用户密码。
+- ClawLoops 只消费 Authentik 已认证后的会话与身份上下文。
 
 ### 6.2 统一登录方式
 
@@ -202,7 +202,7 @@
 
 ### 6.5 invitation 生命周期冻结
 
-- 创建 invitation 时只生成 CrewClaw 业务 token；
+- 创建 invitation 时只生成 ClawLoops 业务 token；
 - 用户调用 `start` 时再延迟创建或换取 Authentik enrollment URL；
 - 平台状态是最终业务真相；
 - `revoked / expired / consumed` 必须由平台优先校验；
@@ -331,7 +331,7 @@
 
 Authentik 完成 enrollment / login 后：
 
-- CrewClaw 必须以当前 `subjectId` 关联用户；
+- ClawLoops 必须以当前 `subjectId` 关联用户；
 - `post-login` 阶段执行邮箱强校验；
 - 完成目标 workspace / role 绑定；
 - 标记 invitation `consumed`；
@@ -362,7 +362,7 @@ Authentik 完成 enrollment / login 后：
 
 ### 9.2 平台侧禁止行为
 
-- 禁止在 CrewClaw 数据库保存用户密码；
+- 禁止在 ClawLoops 数据库保存用户密码；
 - 禁止平台自己生成“临时密码”并作为正式密码存储；
 - 禁止平台自己提供密码落库接口；
 - 禁止绕开 Authentik 自行实现第二套密码修改 API。
@@ -380,7 +380,7 @@ Authentik 完成 enrollment / login 后：
 1. 启动 Authentik。
 2. 管理员完成官方初始化流程。
 3. Authentik 管理后台完成应用、Provider、Outpost、Flow 配置。
-4. 访问 CrewClaw 控制面。
+4. 访问 ClawLoops 控制面。
 5. 模块 1 同步管理员用户。
 
 ### 10.2 管理员创建邀请
@@ -395,7 +395,7 @@ Authentik 完成 enrollment / login 后：
 2. 模块 2 校验 invitation。
 3. 模块 1 生成跳转到 Authentik enrollment flow 的入口。
 4. 用户在 Authentik 中完成资料和密码设置。
-5. Authentik 登录成功后回到 CrewClaw。
+5. Authentik 登录成功后回到 ClawLoops。
 6. 模块 1 调 `/internal/users/sync`。
 7. 模块 1 执行邮箱强校验。
 8. 模块 2 根据 pending invitation 幂等完成绑定。
@@ -470,7 +470,7 @@ Authentik 完成 enrollment / login 后：
 本版 MVP 契约的核心不是“让 Authentik 接管一切”，而是：
 
 - **Authentik 接管身份、密码、会话和 enrollment flow**；
-- **CrewClaw 接管用户业务状态、workspace / role 绑定、runtime 与资源治理**；
+- **ClawLoops 接管用户业务状态、workspace / role 绑定、runtime 与资源治理**；
 - **Invitation 采用业务真相与身份执行解耦，首版统一为延迟创建模式**；
 - **首版只开本地密码，后续再向外扩展**；
 - **工作区跳转统一由 `workspace-entry` 收口，前端只在 `ready=true` 时跳转**。
@@ -657,7 +657,7 @@ IF 有 pending invitation:
 #### 统一入口
 
 ```
-*.crewclaw.app → Traefik → Authentik Forward Auth → App
+*.clawloops.app → Traefik → Authentik Forward Auth → App
 ```
 
 ------

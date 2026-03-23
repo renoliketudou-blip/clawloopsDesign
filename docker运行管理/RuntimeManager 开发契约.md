@@ -106,7 +106,7 @@ node dist/index.js gateway --bind lan --port 18789
 
 OpenClaw runtime 容器必须加入：
 
-- `crewclaw_shared`
+- `clawloops_shared`
 
 原因很简单：你现在 `openclaw.json` 和环境变量都依赖容器内通过 `http://litellm:4000` 访问 LiteLLM。
 
@@ -228,12 +228,12 @@ runtimeManager 不能靠“猜名字”找容器，必须靠 label。
 
 建议每个 runtime 容器带上：
 
-- `crewclaw.managed=true`
-- `crewclaw.userId=<userId>`
-- `crewclaw.runtimeId=<runtimeId>`
-- `crewclaw.volumeId=<volumeId>`
-- `crewclaw.routeHost=<routeHost>`
-- `crewclaw.retentionPolicy=<retentionPolicy>`
+- `clawloops.managed=true`
+- `clawloops.userId=<userId>`
+- `clawloops.runtimeId=<runtimeId>`
+- `clawloops.volumeId=<volumeId>`
+- `clawloops.routeHost=<routeHost>`
+- `clawloops.retentionPolicy=<retentionPolicy>`
 
 ------
 
@@ -263,16 +263,16 @@ runtimeManager 不能靠“猜名字”找容器，必须靠 label。
   "runtimeId": "rt_001",
   "imageRef": "ghcr.io/openclaw/openclaw@sha256:a5a4c83b773aca85a8ba99cf155f09afa33946c0aa5cc6a9ccb6162738b5da02",
   "volumeId": "vol_001",
-  "routeHost": "u-001.crewclaw.example.com",
+  "routeHost": "u-001.clawloops.example.com",
   "configMount": {
-    "configFilePath": "/var/lib/crewclaw/runtime-configs/u_001/openclaw.json",
-    "secretFilePath": "/var/lib/crewclaw/runtime-secrets/u_001/gateway.token"
+    "configFilePath": "/var/lib/clawloops/runtime-configs/u_001/openclaw.json",
+    "secretFilePath": "/var/lib/clawloops/runtime-secrets/u_001/gateway.token"
   },
   "retentionPolicy": "preserve_workspace",
   "compat": {
-    "openclawConfigDir": "/var/lib/crewclaw/users/u_001/config",
-    "openclawWorkspaceDir": "/var/lib/crewclaw/users/u_001/workspace",
-    "networkName": "crewclaw_shared",
+    "openclawConfigDir": "/var/lib/clawloops/users/u_001/config",
+    "openclawWorkspaceDir": "/var/lib/clawloops/users/u_001/workspace",
+    "networkName": "clawloops_shared",
     "gatewayPort": 18789,
     "bridgePort": 18790
   }
@@ -289,7 +289,7 @@ runtimeManager 不能靠“猜名字”找容器，必须靠 label。
 {
   "runtimeId": "rt_001",
   "observedState": "creating",
-  "internalEndpoint": "http://crewclaw-rt-u_001:18789",
+  "internalEndpoint": "http://clawloops-rt-u_001:18789",
   "message": "creating"
 }
 ```
@@ -300,7 +300,7 @@ runtimeManager 不能靠“猜名字”找容器，必须靠 label。
 {
   "runtimeId": "rt_001",
   "observedState": "running",
-  "internalEndpoint": "http://crewclaw-rt-u_001:18789",
+  "internalEndpoint": "http://clawloops-rt-u_001:18789",
   "message": "already running"
 }
 ```
@@ -394,7 +394,7 @@ runtimeManager 不能靠“猜名字”找容器，必须靠 label。
 {
   "runtimeId": "rt_001",
   "observedState": "running",
-  "internalEndpoint": "http://crewclaw-rt-u_001:18789",
+  "internalEndpoint": "http://clawloops-rt-u_001:18789",
   "message": "ok"
 }
 ```

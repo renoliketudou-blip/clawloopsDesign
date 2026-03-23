@@ -9,7 +9,7 @@
 - 身份认证由 **Authentik** 负责，前端不自建密码体系。
 - 首版只开放 **本地账号密码** 登录。
 - 邀请制接入是普通用户首版接入主链路。
-- `workspace / role / user.status` 以 CrewClaw 平台为准。
+- `workspace / role / user.status` 以 ClawLoops 平台为准。
 - `disabled` 用户不能继续访问业务页面。
 - `browserUrl` 是受保护入口，不是匿名地址。
 

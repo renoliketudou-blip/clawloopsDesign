@@ -1,10 +1,10 @@
-# CrewClaw × 官方 Authentik 实施文档（冻结修订）
+# ClawLoops × 官方 Authentik 实施文档（冻结修订）
 
 这份文档是给你直接在 Cursor 里开干用的，不再停留在“讨论方案”，而是明确到：
 
 - 你现在的文档应该怎么改；
 - 官方 Authentik 能做到什么；
-- 哪些地方要由 CrewClaw 自己补一层；
+- 哪些地方要由 ClawLoops 自己补一层；
 - 首版应该如何拆任务；
 - 接口、部署、流程、代码落点如何安排。
 
@@ -55,7 +55,7 @@
 **推荐的首版不是“平台自己写认证”，也不是“把业务全塞进 Authentik”，而是下面这套：**
 
 - Authentik 负责身份、密码、会话、enrollment flow。
-- CrewClaw 负责 workspace / role / invitation / runtime 业务真相。
+- ClawLoops 负责 workspace / role / invitation / runtime 业务真相。
 - Traefik + Outpost 负责前置鉴权。
 - 首版只启用本地账号密码。
 - 邀请链接走“平台 token + enrollment flow”模式。
@@ -88,7 +88,7 @@
 3. 这个 invitation 链接本身就是“首次免密码入口”；
 4. 在 Authentik 的 enrollment flow 里，用户填写资料并设置密码；
 5. 完成后由 Authentik 自动登录；
-6. CrewClaw 根据 invitation 完成 workspace / role 绑定。
+6. ClawLoops 根据 invitation 完成 workspace / role 绑定。
 
 ---
 
@@ -114,8 +114,8 @@ Docker 分容器、同网络
 建议至少拆成：
 
 - `traefik`
-- `crewclaw-web`
-- `crewclaw-api`
+- `clawloops-web`
+- `clawloops-api`
 - `runtime-manager`
 - `authentik-postgresql`
 - `authentik-redis`
@@ -131,7 +131,7 @@ Docker 分容器、同网络
 
 ```yaml
 networks:
-  crewclaw_net:
+  clawloops_net:
     driver: bridge
 ```
 
@@ -139,9 +139,9 @@ networks:
 
 因为首版需要同时满足：
 
-- Traefik 能访问 CrewClaw 与 Outpost
+- Traefik 能访问 ClawLoops 与 Outpost
 - Outpost 能访问 Authentik Core
-- CrewClaw 能访问 Authentik 管理接口（若你用 API/脚本初始化）
+- ClawLoops 能访问 Authentik 管理接口（若你用 API/脚本初始化）
 - Runtime Manager 能访问内部服务
 
 同网络最省事，也最符合你当前单机部署模型。
@@ -194,7 +194,7 @@ networks:
 2. default authentication flow（本地密码）
 3. invitation enrollment flow
 4. recovery / user settings flow（可沿用官方默认）
-5. CrewClaw 平台 Application
+5. ClawLoops 平台 Application
 6. Proxy Provider
 7. Proxy Outpost
 
@@ -224,17 +224,17 @@ networks:
 
 - 登录页只看到本地账号密码；
 - 不出现其他 Source 按钮；
-- 登录成功后能回到 CrewClaw。
+- 登录成功后能回到 ClawLoops。
 
 ### 7.3 你在 Cursor 里实现时对应的系统边界
 
 - Authentik 决定“这个人登录成功没有”。
-- CrewClaw 决定“这个人虽然登录了，但是否可访问业务”。
+- ClawLoops 决定“这个人虽然登录了，但是否可访问业务”。
 
 换句话说：
 
 - 认证成功 ≠ 业务允许
-- CrewClaw 还要检查 `user.status / workspace membership / runtime rules`
+- ClawLoops 还要检查 `user.status / workspace membership / runtime rules`
 
 ---
 
@@ -244,7 +244,7 @@ networks:
 
 ### 8.1 业务对象设计
 
-建议你在 CrewClaw 数据库增加 `invitations` 表，至少包含：
+建议你在 ClawLoops 数据库增加 `invitations` 表，至少包含：
 
 ```sql
 id
@@ -276,7 +276,7 @@ updated_at
 
 所以推荐模式是：
 
-- **CrewClaw invitation = 业务真相**
+- **ClawLoops invitation = 业务真相**
 - **Authentik invitation = 身份执行入口**
 
 ### 8.3 外部发给用户的链接
@@ -284,7 +284,7 @@ updated_at
 外部统一发：
 
 ```text
-https://crewclaw.example.com/invite/{platform_token}
+https://clawloops.example.com/invite/{platform_token}
 ```
 
 不要直接把 Authentik 的原始 `itoken` 链接当成对外业务链接。
@@ -334,7 +334,7 @@ Enrollment Flow 建议顺序：
 3. User Write Stage
 4. User Login Stage
 
-#### 第五步：登录成功回到 CrewClaw
+#### 第五步：登录成功回到 ClawLoops
 
 回到 `POST /api/v1/auth/post-login` 或等价的 BFF 路由。
 
@@ -407,7 +407,7 @@ Enrollment Flow 建议顺序：
 - user settings / recovery / reset password
 - forward auth
 
-### 10.2 CrewClaw 负责
+### 10.2 ClawLoops 负责
 
 - 用户业务状态（active / disabled）
 - invitation 的业务有效性
@@ -423,7 +423,7 @@ Enrollment Flow 建议顺序：
 首版最稳的做法是：
 
 - Authentik 可以带一些辅助属性或 group
-- 但最终平台业务授权仍以 CrewClaw 为准
+- 但最终平台业务授权仍以 ClawLoops 为准
 
 ---
 
@@ -616,7 +616,7 @@ POST /api/v1/users/me/runtime/delete
 4. pending invitation cookie / session
 5. post-login consume 逻辑
 6. 邮箱强校验
-7. Authentik → CrewClaw 错误映射
+7. Authentik → ClawLoops 错误映射
 
 ### 14.5 第五组：Traefik / Outpost 接入
 
@@ -647,7 +647,7 @@ POST /api/v1/users/me/runtime/delete
 下面这段可以直接复制到 Cursor 作为任务说明。
 
 ```md
-目标：在不修改上游源码的前提下，把 CrewClaw 接入官方 Authentik，并冻结首版 invitation 生命周期与访问规则。
+目标：在不修改上游源码的前提下，把 ClawLoops 接入官方 Authentik，并冻结首版 invitation 生命周期与访问规则。
 
 边界：
 - 使用官方 Authentik
@@ -746,7 +746,7 @@ POST /api/v1/users/me/runtime/delete
 那么首版最稳的方案就是：
 
 1. **官方 Authentik 负责身份、密码、会话**
-2. **CrewClaw 负责 invitation 业务真相和 workspace/role 绑定**
+2. **ClawLoops 负责 invitation 业务真相和 workspace/role 绑定**
 3. **Traefik + Outpost 负责统一前置鉴权**
 4. **首版只做本地密码**
 5. **把 invitation 链接定义成一次性免密码接入入口**

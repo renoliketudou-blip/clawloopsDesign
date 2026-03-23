@@ -1,4 +1,4 @@
-# CrewClaw 平台 MVP 统一总接口（Authentik 接入版，冻结修订）
+# ClawLoops 平台 MVP 统一总接口（Authentik 接入版，冻结修订）
 
 供前后端、平台服务与 Runtime Manager 在“官方 Authentik 首版接入”前提下统一联调使用。
 
@@ -61,11 +61,11 @@
 
 ### 3.2 invitation 双层模型与延迟创建
 
-- **CrewClaw token 是业务入口真相**；
+- **ClawLoops token 是业务入口真相**；
 - **Authentik `itoken` 是身份执行入口**；
 - `/invite/{token}`、`/api/v1/public/invitations/{token}`、`/api/v1/public/invitations/{token}/start` 只接受平台 token；
 - `itoken` 只应出现在 Authentik enrollment URL 中，不对外作为业务主 token；
-- 首版统一采用 **延迟创建模式**：创建 invitation 时只生成 CrewClaw 业务 token；用户调用 `/start` 时再创建或换取 Authentik invitation / enrollment URL；
+- 首版统一采用 **延迟创建模式**：创建 invitation 时只生成 ClawLoops 业务 token；用户调用 `/start` 时再创建或换取 Authentik invitation / enrollment URL；
 - 首版禁止混用“提前创建”和“延迟创建”两种模式。
 
 ### 3.3 invitation 状态真相
@@ -88,10 +88,10 @@
 
 在契约、设计、接口三份文档统一禁止：
 
-- CrewClaw 不保存密码；
-- CrewClaw 不生成正式临时密码；
-- CrewClaw 不提供密码落库接口；
-- CrewClaw 不实现独立改密 API；
+- ClawLoops 不保存密码；
+- ClawLoops 不生成正式临时密码；
+- ClawLoops 不提供密码落库接口；
+- ClawLoops 不实现独立改密 API；
 - 所有密码设置、重置、修改统一走 Authentik Flow。
 
 ### 3.6 幂等要求
@@ -171,7 +171,7 @@
 
 GET `/api/v1/auth/me`
 
-返回当前 CrewClaw 视角下的登录用户信息。
+返回当前 ClawLoops 视角下的登录用户信息。
 
 **示例**：
 
@@ -336,7 +336,7 @@ POST `/api/v1/public/invitations/{token}/start`
   "pendingInvitationSession": {
     "ttlSeconds": 1200
   },
-  "redirectUrl": "https://auth.example.com/if/flow/crewclaw-invitation-enrollment/?itoken=xxxx"
+  "redirectUrl": "https://auth.example.com/if/flow/clawloops-invitation-enrollment/?itoken=xxxx"
 }
 ```
 
@@ -366,10 +366,10 @@ GET `/api/v1/users/me/runtime`
   "runtime": {
     "runtimeId": "rt_001",
     "volumeId": "vol_001",
-    "imageRef": "crewclaw-runtime-wrapper:openclaw-1.0.0",
+    "imageRef": "clawloops-runtime-wrapper:openclaw-1.0.0",
     "desiredState": "running",
     "observedState": "running",
-    "browserUrl": "https://u-001.crewclaw.example.com",
+    "browserUrl": "https://u-001.clawloops.example.com",
     "internalEndpoint": "http://runtime-u-001:3000",
     "retentionPolicy": "preserve_workspace",
     "lastError": null
@@ -394,7 +394,7 @@ GET `/api/v1/users/me/runtime/status`
     "status": "running"
   },
   "ready": true,
-  "browserUrl": "https://u-001.crewclaw.example.com",
+  "browserUrl": "https://u-001.clawloops.example.com",
   "reason": null,
   "lastError": null
 }
@@ -491,7 +491,7 @@ GET `/api/v1/workspace-entry`
 {
   "ready": true,
   "runtimeId": "rt_001",
-  "browserUrl": "https://u-001.crewclaw.example.com"
+  "browserUrl": "https://u-001.clawloops.example.com"
 }
 ```
 
@@ -599,7 +599,7 @@ POST `/api/v1/admin/invitations`
 {
   "invitationId": "inv_001",
   "status": "pending",
-  "inviteUrl": "https://crewclaw.example.com/invite/eyJ...",
+  "inviteUrl": "https://clawloops.example.com/invite/eyJ...",
   "targetEmail": "user@example.com",
   "workspaceId": "ws_001",
   "role": "workspace_member",
@@ -609,7 +609,7 @@ POST `/api/v1/admin/invitations`
 
 **冻结说明**：
 
-- 创建时仅生成 CrewClaw 业务 token；
+- 创建时仅生成 ClawLoops 业务 token；
 - 不要求预先创建 Authentik invitation。
 
 ### 8.7 获取 invitation 详情
@@ -657,7 +657,7 @@ POST `/api/v1/admin/invitations/{invitationId}/resend`
 {
   "invitationId": "inv_001",
   "status": "pending",
-  "inviteUrl": "https://crewclaw.example.com/invite/eyJ..."
+  "inviteUrl": "https://clawloops.example.com/invite/eyJ..."
 }
 ```
 
@@ -786,11 +786,11 @@ GET `/internal/model-config/users/{userId}`
 
 POST `/internal/usage/records`
 
-### 9.10 Authentik → CrewClaw 错误映射策略
+### 9.10 Authentik → ClawLoops 错误映射策略
 
 建议最小映射：
 
-| Authentik / 上游场景 | CrewClaw 错误码 |
+| Authentik / 上游场景 | ClawLoops 错误码 |
 | --- | --- |
 | enrollment flow 执行失败 / invitation 无法生成 | `INVITATION_ERROR` |
 | 用户创建成功但同步失败 | `USER_SYNC_ERROR` |
@@ -810,12 +810,12 @@ POST `/internal/runtime-manager/containers/ensure-running`
 {
   "userId": "u_001",
   "runtimeId": "rt_001",
-  "imageRef": "crewclaw-runtime-wrapper:openclaw-1.0.0",
+  "imageRef": "clawloops-runtime-wrapper:openclaw-1.0.0",
   "volumeId": "vol_001",
-  "routeHost": "u-001.crewclaw.example.com",
+  "routeHost": "u-001.clawloops.example.com",
   "configMount": {
-    "configFilePath": "/var/lib/crewclaw/runtime-configs/u_001/model-gateway.json",
-    "secretFilePath": "/var/lib/crewclaw/runtime-secrets/u_001/gateway.token"
+    "configFilePath": "/var/lib/clawloops/runtime-configs/u_001/model-gateway.json",
+    "secretFilePath": "/var/lib/clawloops/runtime-secrets/u_001/gateway.token"
   },
   "retentionPolicy": "preserve_workspace"
 }

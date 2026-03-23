@@ -1,4 +1,4 @@
-# CrewClaw × Authentik 实施文档包
+# ClawLoops × Authentik 实施文档包
 
 本压缩包包含 4 份可直接在 Cursor 中使用和继续迭代的 Markdown 文档：
 
@@ -10,7 +10,7 @@
 ## 本包采用的落地结论
 
 - 首版直接使用**官方 Authentik**。
-- **不改 OpenClaw / CrewClaw 上游源码**，只改你自己的平台接入层、网关和管理逻辑。
+- **不改 OpenClaw / ClawLoops 上游源码**，只改你自己的平台接入层、网关和管理逻辑。
 - Docker 采用**分容器、同网络**。
 - 首版只开放**本地账号密码**。
 - 后续再逐步接入 **Google / GitHub / 企业 SSO / 微信 / 钉钉 / 飞书**。
@@ -35,7 +35,7 @@
 - 通过**一次性 invitation token** 打开接入页；
 - 在 Authentik 的 enrollment flow 中完成用户名/资料/密码设置；
 - 完成后由 Authentik 自动登录；
-- CrewClaw 再根据 invitation 元数据绑定 workspace / role。
+- ClawLoops 再根据 invitation 元数据绑定 workspace / role。
 
 这样最贴近你的业务目标，也最符合官方 Authentik 的能力边界。
 
