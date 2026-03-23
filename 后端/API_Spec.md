@@ -1,13 +1,14 @@
-# ClawLoops 平台 MVP 统一总接口（Authentik 接入版，冻结修订）
 
-供前后端、平台服务与 Runtime Manager 在“官方 Authentik 首版接入”前提下统一联调使用。
+# ClawLoops 平台 MVP 统一总接口（Authentik 接入版，运行时冻结修订）
+
+供前后端、平台服务、Orchestrator 与 Runtime Manager 在“官方 Authentik 首版接入 + Runtime V1 冻结”前提下统一联调使用。
 
 | 文档定位 | 接口与字段基线 |
 | --- | --- |
 | 适用范围 | 用户侧 / 管理员侧 / 公开 invitation 入口 / 内部服务侧 / Runtime Manager 内部接口 |
-| 修订重点 | 冻结 invitation 生命周期、统一 token 语义、补齐幂等与安全规则、收紧字段命名与跳转口径 |
+| 修订重点 | 冻结 invitation 生命周期、统一 token 语义、补齐 runtime V1 contract、收紧字段命名与跳转口径 |
 | 响应原则 | 所有响应均采用 JSON；字段名直接作为开发基线，不再自行改名 |
-| 当前版本 | v0.7-authentik-frozen |
+| 当前版本 | v0.8-authentik-runtime-frozen |
 
 ---
 
@@ -15,9 +16,9 @@
 
 | 项 | 说明 |
 | --- | --- |
-| 成功状态码 | 读取接口默认 `200`；创建默认 `201`；异步动作默认 `202` |
+| 成功状态码 | 读取接口默认 `200`；创建默认 `201`；用户侧 / 管理员侧异步动作默认 `202` |
 | 错误体 | 统一至少包含 `code` 与 `message` |
-| 异步任务 | runtime 启停删继续返回 `taskId` |
+| 异步任务 | **仅 Orchestrator 对外层** runtime 启停删返回 `taskId`；RuntimeManager internal 接口**同步执行**，不返回 `taskId` |
 | 权限约定 | 用户侧接口依赖当前登录用户；管理员侧接口仅 `admin`；internal 接口仅服务间访问 |
 | internal 鉴权 | internal API 必须通过服务间鉴权（如 mTLS 或 internal token），并且禁止公网访问 |
 | disabled 语义 | 除 `/api/v1/auth/me` 外，disabled 用户访问业务接口统一返回 `403 USER_DISABLED`；但 `/api/v1/auth/access` 永远返回 `200`，仅用于状态判断 |
@@ -31,23 +32,27 @@
 
 | HTTP | code | 用途 |
 | --- | --- | --- |
-| 401 | UNAUTHENTICATED | 未登录或会话无效 |
-| 403 | ACCESS_DENIED | 权限不足 |
-| 403 | USER_DISABLED | 用户已禁用 |
-| 404 | USER_NOT_FOUND | 用户不存在 |
-| 404 | RUNTIME_NOT_FOUND | runtime 不存在 |
-| 404 | INVITATION_NOT_FOUND | invitation 不存在 |
-| 404 | MODEL_NOT_FOUND | 模型不存在 |
-| 409 | RUNTIME_ACTION_CONFLICT | runtime 正忙或状态冲突 |
-| 409 | INVITATION_ALREADY_CONSUMED | invitation 已消费 |
-| 409 | INVITATION_REVOKED | invitation 已撤销 |
-| 410 | INVITATION_EXPIRED | invitation 已过期（由 `expiresAt < now` 推导，不单独落库存状态） |
-| 422 | INVITATION_EMAIL_MISMATCH | 当前认证邮箱与 invitation `targetEmail` 不匹配 |
-| 422 | INVITATION_WORKSPACE_INVALID | invitation 指向的 workspace 无效 |
-| 422 | QUOTA_EXCEEDED | 超出 quota |
-| 500/502 | INVITATION_ERROR | invitation 流程执行失败或上游身份流程失败 |
-| 500/502 | USER_SYNC_ERROR | 用户同步失败 |
-| 500/502 | *_ERROR | 内部模块或上游错误 |
+| 401 | `UNAUTHENTICATED` | 未登录或会话无效 |
+| 403 | `ACCESS_DENIED` | 权限不足 |
+| 403 | `USER_DISABLED` | 用户已禁用 |
+| 404 | `USER_NOT_FOUND` | 用户不存在 |
+| 404 | `RUNTIME_NOT_FOUND` | 仅用于业务真相层 runtime 不存在；**不用于 RM 容器事实查询** |
+| 404 | `INVITATION_NOT_FOUND` | invitation 不存在 |
+| 404 | `MODEL_NOT_FOUND` | 模型不存在 |
+| 409 | `RUNTIME_ACTION_CONFLICT` | runtime 正忙、状态冲突，或同一 `runtimeId` 命中多个容器 |
+| 409 | `RUNTIME_CONTRACT_DRIFT` | 已有 runtime 容器与冻结 contract 不一致 |
+| 409 | `INVITATION_ALREADY_CONSUMED` | invitation 已消费 |
+| 409 | `INVITATION_REVOKED` | invitation 已撤销 |
+| 410 | `INVITATION_EXPIRED` | invitation 已过期（由 `expiresAt < now` 推导，不单独落库存状态） |
+| 422 | `INVITATION_EMAIL_MISMATCH` | 当前认证邮箱与 invitation `targetEmail` 不匹配 |
+| 422 | `INVITATION_WORKSPACE_INVALID` | invitation 指向的 workspace 无效 |
+| 422 | `QUOTA_EXCEEDED` | 超出 quota |
+| 500/502 | `INVITATION_ERROR` | invitation 流程执行失败或上游身份流程失败 |
+| 500/502 | `USER_SYNC_ERROR` | 用户同步失败 |
+| 500/502 | `RUNTIME_START_FAILED` | runtime 创建、权限初始化或启动探测失败 |
+| 500 | `RUNTIME_STOP_FAILED` | runtime 停止失败 |
+| 500 | `RUNTIME_DELETE_FAILED` | runtime 删除或目录清理失败 |
+| 500/502 | `*_ERROR` | 其他内部模块或上游错误 |
 
 ---
 
@@ -55,62 +60,76 @@
 
 ### 3.1 管理员初始化口径
 
-- 首版官方初始化管理员按默认 **`akadmin`** 处理；
-- 业务上视为管理员角色账号；
-- 不再在文档中混用“首个管理员是 `admin`”与“首个管理员是 `akadmin`”两种表达。
+- 首版官方初始化管理员按默认 **`akadmin`** 处理
+- 业务上视为管理员角色账号
+- 不再在文档中混用“首个管理员是 `admin`”与“首个管理员是 `akadmin`”两种表达
 
 ### 3.2 invitation 双层模型与延迟创建
 
-- **ClawLoops token 是业务入口真相**；
-- **Authentik `itoken` 是身份执行入口**；
-- `/invite/{token}`、`/api/v1/public/invitations/{token}`、`/api/v1/public/invitations/{token}/start` 只接受平台 token；
-- `itoken` 只应出现在 Authentik enrollment URL 中，不对外作为业务主 token；
-- 首版统一采用 **延迟创建模式**：创建 invitation 时只生成 ClawLoops 业务 token；用户调用 `/start` 时再创建或换取 Authentik invitation / enrollment URL；
-- 首版禁止混用“提前创建”和“延迟创建”两种模式。
+- **ClawLoops token 是业务入口真相**
+- **Authentik `itoken` 是身份执行入口**
+- `/invite/{token}`、`/api/v1/public/invitations/{token}`、`/api/v1/public/invitations/{token}/start` 只接受平台 token
+- `itoken` 只应出现在 Authentik enrollment URL 中，不对外作为业务主 token
+- 首版统一采用 **延迟创建模式**：创建 invitation 时只生成 ClawLoops 业务 token；用户调用 `/start` 时再创建或换取 Authentik invitation / enrollment URL
+- 首版禁止混用“提前创建”和“延迟创建”两种模式
 
 ### 3.3 invitation 状态真相
 
-- 平台 invitation 状态是最终业务真相；
-- 首版只存 `pending / consumed / revoked`；
-- `expired` 不入库，统一通过 `expiresAt < now` 派生；
-- `revoked / expired / consumed` 必须先由平台校验；
-- 即使身份侧 token 仍有效，平台也必须以平台状态阻断 `start` 或 `post-login`。
+- 平台 invitation 状态是最终业务真相
+- 首版只存 `pending / consumed / revoked`
+- `expired` 不入库，统一通过 `expiresAt < now` 派生
+- `revoked / expired / consumed` 必须先由平台校验
+- 即使身份侧 token 仍有效，平台也必须以平台状态阻断 `start` 或 `post-login`
 
 ### 3.4 邮箱校验与首次接入流程
 
-- 首版统一为 **强邮箱校验**；
-- 校验发生在 `POST /api/v1/auth/post-login` 阶段，即已经拿到当前 `subjectId` 与认证邮箱之后；
-- 当前认证邮箱必须匹配 `targetEmail`，否则返回 `INVITATION_EMAIL_MISMATCH`；
-- 首版首次接入流程固定为：**用户通过 invitation 链接进入 enrollment flow，在 flow 内直接设置密码，并由 Authentik 自动登录**；
-- “先 magic link 进入、之后再强制改密”不作为首版实现。
+- 首版统一为 **强邮箱校验**
+- 校验发生在 `POST /api/v1/auth/post-login` 阶段，即已经拿到当前 `subjectId` 与认证邮箱之后
+- 当前认证邮箱必须匹配 `targetEmail`，否则返回 `INVITATION_EMAIL_MISMATCH`
+- 首版首次接入流程固定为：**用户通过 invitation 链接进入 enrollment flow，在 flow 内直接设置密码，并由 Authentik 自动登录**
+- “先 magic link 进入、之后再强制改密”不作为首版实现
 
 ### 3.5 平台密码禁区
 
 在契约、设计、接口三份文档统一禁止：
 
-- ClawLoops 不保存密码；
-- ClawLoops 不生成正式临时密码；
-- ClawLoops 不提供密码落库接口；
-- ClawLoops 不实现独立改密 API；
-- 所有密码设置、重置、修改统一走 Authentik Flow。
+- ClawLoops 不保存密码
+- ClawLoops 不生成正式临时密码
+- ClawLoops 不提供密码落库接口
+- ClawLoops 不实现独立改密 API
+- 所有密码设置、重置、修改统一走 Authentik Flow
 
 ### 3.6 幂等要求
 
-- `POST /api/v1/auth/post-login` 必须幂等；
-- 同一 `invitationId + userId` 只能成功消费一次；
-- 重复调用返回已消费 / 已绑定结果；
-- `consume invitation` 与 `workspace membership binding` 必须原子完成，或定义清晰补偿逻辑；
-- `POST /api/v1/public/invitations/{token}/start` 也是幂等操作；可重复调用，但同一浏览器会话只保留一个有效 pending invitation 会话；
-- pending invitation session 必须具备 TTL（建议 10–30 分钟）且仅绑定当前浏览器会话。
+- `POST /api/v1/auth/post-login` 必须幂等
+- 同一 `invitationId + userId` 只能成功消费一次
+- 重复调用返回已消费 / 已绑定结果
+- `consume invitation` 与 `workspace membership binding` 必须原子完成，或定义清晰补偿逻辑
+- `POST /api/v1/public/invitations/{token}/start` 也是幂等操作；可重复调用，但同一浏览器会话只保留一个有效 pending invitation 会话
+- pending invitation session 必须具备 TTL（建议 10–30 分钟）且仅绑定当前浏览器会话
 
 ### 3.7 runtime 与跳转语义
 
-- `task.status` = 操作生命周期；
-- `observedState` = 资源状态；
-- `ready` = 最终可访问状态；
-- 前端跳转只看 `ready`；
-- `workspace-entry` 是唯一跳转入口接口；
-- `runtime/status` 仅用于状态展示，不作为最终跳转依据。
+- `task.status` = 操作生命周期
+- `observedState` = 资源状态
+- `ready` = 最终可访问状态
+- 前端跳转只看 `ready`
+- `workspace-entry` 是唯一跳转入口接口
+- `runtime/status` 仅用于状态展示，不作为最终跳转依据
+
+### 3.8 runtime V1 冻结补充
+
+- `runtimeId` 在平台范围内**全局唯一**
+- 用户侧 runtime 启停删是 **Orchestrator 异步任务**
+- RM internal 接口是 **同步执行器**，立即返回当前 `observedState`
+- V1 runtime 镜像固定为  
+  `ghcr.io/openclaw/openclaw@sha256:a5a4c83b773aca85a8ba99cf155f09afa33946c0aa5cc6a9ccb6162738b5da02`
+- RM internal 请求体**删除 `imageRef`**
+- `compat.openclawConfigDir / compat.openclawWorkspaceDir` 是 `ensure-running` **必填**
+- 统一共享网络为 `clawloops_shared`
+- `internalEndpoint` 固定为 `http://rt-<runtimeId>:18789`
+- `18789` 是唯一必检端口；`18790` 仅兼容保留
+- `routeHost` 在 RM 中只作 label 追踪，不参与关键 drift 判定
 
 ---
 
@@ -158,10 +177,10 @@
 | POST | `/internal/invitations/{invitationId}/revoke` | 撤销 invitation | internal |
 | GET | `/internal/model-config/users/{userId}` | 获取运行时模型配置 | internal |
 | POST | `/internal/usage/records` | 接收 OpenClaw usage 上报 | internal |
-| POST | `/internal/runtime-manager/containers/ensure-running` | 确保容器运行 | internal |
-| POST | `/internal/runtime-manager/containers/stop` | 停止容器 | internal |
-| POST | `/internal/runtime-manager/containers/delete` | 删除容器 | internal |
-| GET | `/internal/runtime-manager/containers/{runtimeId}` | 查询容器状态 | internal |
+| POST | `/internal/runtime-manager/containers/ensure-running` | 确保容器运行（RM 同步接口） | internal |
+| POST | `/internal/runtime-manager/containers/stop` | 停止容器（RM 同步接口） | internal |
+| POST | `/internal/runtime-manager/containers/delete` | 删除容器（RM 同步接口） | internal |
+| GET | `/internal/runtime-manager/containers/{runtimeId}` | 查询容器状态（RM 同步接口） | internal |
 
 ---
 
@@ -170,8 +189,6 @@
 ### 5.1 获取当前登录用户
 
 GET `/api/v1/auth/me`
-
-返回当前 ClawLoops 视角下的登录用户信息。
 
 **示例**：
 
@@ -198,8 +215,6 @@ GET `/api/v1/auth/me`
 
 GET `/api/v1/auth/access`
 
-> 本接口永远返回 `200`，仅用于状态判断，不走 `403` 分支。
-
 **示例**：
 
 ```json
@@ -222,8 +237,6 @@ GET `/api/v1/auth/access`
 
 GET `/api/v1/auth/options`
 
-**用途**：告诉前端首版当前启用了哪些登录方式。
-
 **首版固定响应**：
 
 ```json
@@ -239,20 +252,9 @@ GET `/api/v1/auth/options`
 }
 ```
 
-> 首版不返回 `futureMethods`；避免前端误判存在即将开放的多登录方式入口。
-
 ### 5.4 登录完成收口入口
 
 POST `/api/v1/auth/post-login`
-
-**用途边界**：
-
-- Authentik 完成认证或 enrollment 后，浏览器回到该入口；
-- 模块 1 在此触发 `/internal/users/sync`；
-- 若当前存在待消费 invitation 上下文，则完成 workspace / role 绑定；
-- 邮箱强校验也在此执行；
-- 然后重定向到工作台或 `/api/v1/workspace-entry`；
-- 本接口必须幂等，浏览器刷新、重复提交、网络重试不得造成重复 side effect。
 
 **请求示例**：
 
@@ -274,11 +276,6 @@ POST `/api/v1/auth/post-login`
 }
 ```
 
-**幂等语义**：
-
-- 第一次成功：完成 `sync user -> consume invitation -> bind workspace membership`；
-- 重复调用：返回相同最终结果，不重复创建 membership，不重复消费 invitation。
-
 ---
 
 ## 6. 公开 invitation 接口
@@ -286,8 +283,6 @@ POST `/api/v1/auth/post-login`
 ### 6.1 查看 invitation 预览
 
 GET `/api/v1/public/invitations/{token}`
-
-**用途**：用户点击邮件或分享链接后，前端先调用本接口确认邀请有效性并展示接入页。
 
 **成功示例**：
 
@@ -305,28 +300,9 @@ GET `/api/v1/public/invitations/{token}`
 }
 ```
 
-**失败示例**：
-
-```json
-{
-  "valid": false,
-  "code": "INVITATION_EXPIRED",
-  "message": "This invitation has expired."
-}
-```
-
 ### 6.2 启动 invitation 接入流程
 
 POST `/api/v1/public/invitations/{token}/start`
-
-**职责边界**：
-
-- 校验平台 token；
-- 校验平台 invitation 真相：未撤销、未消费、未过期；
-- 写入短期 pending invitation 会话；
-- 按延迟创建模式生成或换取 Authentik enrollment URL；
-- 返回可跳转到 Authentik 的 URL；
-- 本接口为幂等操作：重复调用仅复用当前浏览器会话中的同一有效 pending invitation 会话。
 
 **成功示例**：
 
@@ -340,12 +316,6 @@ POST `/api/v1/public/invitations/{token}/start`
 }
 ```
 
-**说明**：
-
-- 本接口不直接消费 invitation；
-- 真正消费发生在 Authentik 登录成功并回到 `POST /api/v1/auth/post-login` 后；
-- 若平台状态已 `revoked / consumed / expired`，必须直接阻断，即使 Authentik `itoken` 仍未过期。
-
 ---
 
 ## 7. 用户侧接口
@@ -353,10 +323,6 @@ POST `/api/v1/public/invitations/{token}/start`
 ### 7.1 获取当前用户 runtime binding（完整对象）
 
 GET `/api/v1/users/me/runtime`
-
-**用途边界**：
-
-用于详情页、删除确认页、排障场景；不建议高频轮询。
 
 **示例**：
 
@@ -366,22 +332,26 @@ GET `/api/v1/users/me/runtime`
   "runtime": {
     "runtimeId": "rt_001",
     "volumeId": "vol_001",
-    "imageRef": "clawloops-runtime-wrapper:openclaw-1.0.0",
+    "imageRef": "ghcr.io/openclaw/openclaw@sha256:a5a4c83b773aca85a8ba99cf155f09afa33946c0aa5cc6a9ccb6162738b5da02",
     "desiredState": "running",
     "observedState": "running",
     "browserUrl": "https://u-001.clawloops.example.com",
-    "internalEndpoint": "http://runtime-u-001:3000",
+    "internalEndpoint": "http://rt-rt_001:18789",
     "retentionPolicy": "preserve_workspace",
     "lastError": null
   }
 }
 ```
 
+冻结说明：
+
+- `imageRef` 是平台记录的**实际生效镜像真相**
+- 但在 V1 中，调用方**不能**通过 RM internal API 覆盖它
+- `internalEndpoint` 必须统一使用 `18789`，且基于固定 alias，不得再出现 `3000`
+
 ### 7.2 获取当前用户 runtime 轻量状态投影
 
 GET `/api/v1/users/me/runtime/status`
-
-> 只用于展示状态；不作为最终跳转依据。
 
 **示例**：
 
@@ -432,8 +402,6 @@ POST `/api/v1/users/me/runtime/stop`
 
 POST `/api/v1/users/me/runtime/delete`
 
-> 首版不再使用 `DELETE` 携带请求体，避免客户端或网关兼容性问题。
-
 **请求体**：
 
 ```json
@@ -473,17 +441,11 @@ GET `/api/v1/runtime/tasks/{taskId}`
 
 GET `/api/v1/models`
 
-**修订点**：
-
-- 普通用户侧不开放模型绑定管理；
-- 不开放 provider 凭据管理；
-- 只展示当前用户可见模型。
+普通用户侧不开放模型绑定管理；只展示当前用户可见模型。
 
 ### 7.8 获取工作区入口
 
 GET `/api/v1/workspace-entry`
-
-> 这是唯一跳转入口接口。
 
 **响应示例**：
 
@@ -494,11 +456,6 @@ GET `/api/v1/workspace-entry`
   "browserUrl": "https://u-001.clawloops.example.com"
 }
 ```
-
-**冻结规则**：
-
-- 只有 `ready=true` 时前端才能跳转；
-- `browserUrl` 始终受 Traefik + Authentik Forward Auth 保护。
 
 ---
 
@@ -522,18 +479,6 @@ GET `/api/v1/admin/users`
 
 GET `/api/v1/admin/users/{userId}`
 
-建议最小字段：
-
-- `userId`
-- `subjectId`
-- `tenantId`
-- `role`
-- `status`
-- `createdAt`
-- `updatedAt`
-- `auth.provider`
-- `auth.method`
-
 ### 8.3 修改用户状态
 
 PATCH `/api/v1/admin/users/{userId}/status`
@@ -554,30 +499,6 @@ GET `/api/v1/admin/users/{userId}/runtime`
 
 GET `/api/v1/admin/invitations`
 
-**建议过滤参数**：
-
-- `status`
-- `workspaceId`
-- `targetEmail`
-
-**响应示例**：
-
-```json
-{
-  "items": [
-    {
-      "invitationId": "inv_001",
-      "targetEmail": "user@example.com",
-      "workspaceId": "ws_001",
-      "role": "workspace_member",
-      "status": "pending",
-      "expiresAt": "2026-03-31T23:59:59Z",
-      "isExpired": false
-    }
-  ]
-}
-```
-
 ### 8.6 创建 invitation
 
 POST `/api/v1/admin/invitations`
@@ -593,73 +514,17 @@ POST `/api/v1/admin/invitations`
 }
 ```
 
-**响应示例**：
-
-```json
-{
-  "invitationId": "inv_001",
-  "status": "pending",
-  "inviteUrl": "https://clawloops.example.com/invite/eyJ...",
-  "targetEmail": "user@example.com",
-  "workspaceId": "ws_001",
-  "role": "workspace_member",
-  "expiresAt": "2026-03-31T23:59:59Z"
-}
-```
-
-**冻结说明**：
-
-- 创建时仅生成 ClawLoops 业务 token；
-- 不要求预先创建 Authentik invitation。
-
 ### 8.7 获取 invitation 详情
 
 GET `/api/v1/admin/invitations/{invitationId}`
-
-**响应示例**：
-
-```json
-{
-  "invitationId": "inv_001",
-  "targetEmail": "user@example.com",
-  "workspaceId": "ws_001",
-  "role": "workspace_member",
-  "status": "pending",
-  "authentikInvitationRef": null,
-  "expiresAt": "2026-03-31T23:59:59Z",
-  "isExpired": false,
-  "consumedAt": null,
-  "consumedByUserId": null,
-  "lastError": null
-}
-```
 
 ### 8.8 撤销 invitation
 
 POST `/api/v1/admin/invitations/{invitationId}/revoke`
 
-**响应示例**：
-
-```json
-{
-  "invitationId": "inv_001",
-  "status": "revoked"
-}
-```
-
 ### 8.9 重发 invitation
 
 POST `/api/v1/admin/invitations/{invitationId}/resend`
-
-**响应示例**：
-
-```json
-{
-  "invitationId": "inv_001",
-  "status": "pending",
-  "inviteUrl": "https://clawloops.example.com/invite/eyJ..."
-}
-```
 
 ### 8.10 全局模型与 provider 凭据治理
 
@@ -681,13 +546,6 @@ POST `/api/v1/admin/invitations/{invitationId}/resend`
 
 POST `/internal/users/sync`
 
-**职责边界**：
-
-- 仍以 `subjectId` 幂等；
-- 默认 `tenantId=t_default`；
-- 默认 `auth.provider=authentik`；
-- 默认 `auth.method=local_password`（首版）。
-
 **请求示例**：
 
 ```json
@@ -707,68 +565,17 @@ POST `/internal/users/sync`
 
 POST `/internal/invitations`
 
-**请求示例**：
-
-```json
-{
-  "targetEmail": "user@example.com",
-  "workspaceId": "ws_001",
-  "role": "workspace_member",
-  "expiresAt": "2026-03-31T23:59:59Z"
-}
-```
-
-> 首版延迟创建模式下，`authentikInvitationRef` 初始可为空。
-
 ### 9.3 消费 invitation 并完成业务绑定
 
 POST `/internal/invitations/{invitationId}/consume`
-
-**职责边界**：
-
-- 校验 invitation 当前仍为 `pending`；
-- 若 `expiresAt < now`，返回 `INVITATION_EXPIRED`；
-- 校验 `subjectId` / `userId` 合法；
-- 由 `post-login` 阶段执行邮箱强校验；
-- 创建或更新 workspace membership；
-- 把 invitation 标记为 `consumed`；
-- 同一 `invitationId + userId` 必须幂等；
-- `consume invitation` 与 `workspace membership binding` 必须原子，或定义补偿逻辑。
-
-**请求示例**：
-
-```json
-{
-  "userId": "u_001",
-  "subjectId": "authentik:12345",
-  "email": "user@example.com"
-}
-```
-
-**成功示例**：
-
-```json
-{
-  "invitationId": "inv_001",
-  "status": "consumed",
-  "userId": "u_001",
-  "workspaceId": "ws_001",
-  "role": "workspace_member",
-  "result": "already_bound_or_consumed"
-}
-```
 
 ### 9.4 撤销 invitation
 
 POST `/internal/invitations/{invitationId}/revoke`
 
-> 平台状态一旦为 `revoked`，必须阻断后续 `start` 或 `post-login`，即使身份侧 token 仍有效。
-
 ### 9.5 确保 runtime binding 存在
 
 POST `/internal/users/{userId}/runtime-binding/ensure`
-
-保持原冻结行为不变。
 
 ### 9.6 创建或更新 runtime binding
 
@@ -788,8 +595,6 @@ POST `/internal/usage/records`
 
 ### 9.10 Authentik → ClawLoops 错误映射策略
 
-建议最小映射：
-
 | Authentik / 上游场景 | ClawLoops 错误码 |
 | --- | --- |
 | enrollment flow 执行失败 / invitation 无法生成 | `INVITATION_ERROR` |
@@ -798,11 +603,20 @@ POST `/internal/usage/records`
 
 ---
 
-## 10. Runtime Manager 内部接口
+## 10. Runtime Manager 内部接口（冻结细化）
 
 ### 10.1 确保容器运行
 
 POST `/internal/runtime-manager/containers/ensure-running`
+
+冻结边界：
+
+- RM internal 接口是**同步接口**
+- `imageRef` 已从请求体删除
+- `compat.openclawConfigDir / openclawWorkspaceDir` 必填
+- `routeHost` 仅用于 label 追踪
+- 关键 contract drift 返回 `409 RUNTIME_CONTRACT_DRIFT`
+- `internalEndpoint` 固定为 `http://rt-<runtimeId>:18789`
 
 **请求示例**：
 
@@ -810,14 +624,34 @@ POST `/internal/runtime-manager/containers/ensure-running`
 {
   "userId": "u_001",
   "runtimeId": "rt_001",
-  "imageRef": "clawloops-runtime-wrapper:openclaw-1.0.0",
   "volumeId": "vol_001",
   "routeHost": "u-001.clawloops.example.com",
   "configMount": {
-    "configFilePath": "/var/lib/clawloops/runtime-configs/u_001/model-gateway.json",
+    "configFilePath": "/var/lib/clawloops/runtime-configs/u_001/openclaw.json",
     "secretFilePath": "/var/lib/clawloops/runtime-secrets/u_001/gateway.token"
   },
-  "retentionPolicy": "preserve_workspace"
+  "retentionPolicy": "preserve_workspace",
+  "compat": {
+    "openclawConfigDir": "/var/lib/clawloops/users/u_001/config",
+    "openclawWorkspaceDir": "/var/lib/clawloops/users/u_001/workspace",
+  },
+  "env": {
+    "OPENCLAW_GATEWAY_TOKEN": "<redacted>"
+  },
+  "envOverrides": {
+    "OPENCLAW_ALLOW_INSECURE_PRIVATE_WS": "true"
+  }
+}
+```
+
+**成功示例**：
+
+```json
+{
+  "runtimeId": "rt_001",
+  "observedState": "creating",
+  "internalEndpoint": "http://rt-rt_001:18789",
+  "message": "creating"
 }
 ```
 
@@ -827,13 +661,18 @@ POST `/internal/runtime-manager/containers/ensure-running`
 - POST `/internal/runtime-manager/containers/delete`
 - GET `/internal/runtime-manager/containers/{runtimeId}`
 
+冻结补充：
+
+- `stop(nonexistent)=stopped`
+- `delete(nonexistent)=deleted`
+- `GET` 找不到容器事实时返回 `200 + observedState=deleted`
+- 若同一 `runtimeId` 匹配到多个受管容器，返回 `409 RUNTIME_ACTION_CONFLICT`
+
 ---
 
 ## 11. 前端联调建议
 
 ### 11.1 用户工作台初始化
-
-顺序建议：
 
 1. `/api/v1/auth/me`
 2. `/api/v1/auth/access`
@@ -841,8 +680,6 @@ POST `/internal/runtime-manager/containers/ensure-running`
 4. `/api/v1/models`
 
 ### 11.2 invitation 接入页
-
-顺序建议：
 
 1. 打开 `/invite/:token`
 2. 前端调 `/api/v1/public/invitations/{token}`
@@ -889,6 +726,7 @@ POST `/internal/runtime-manager/containers/ensure-running`
 | 密码越权 | 平台不得新增用户密码落库接口或独立改密 API |
 | 登录方式漂移 | 首版不向前端开放 Google / GitHub / 企业 SSO 等入口 |
 | 地址混用 | 不要用一个 `endpoint` 同时表示 `browserUrl` 和 `internalEndpoint` |
+| RM 参数漂移 | 不要在 V1 RM 请求体重新加入 `imageRef / networkName / gatewayPort` |
 
 ---
 
@@ -896,16 +734,18 @@ POST `/internal/runtime-manager/containers/ensure-running`
 
 接口层面的关键冻结如下：
 
-1. **管理员初始化统一按 `akadmin` 口径处理**；
-2. **Invitation 采用双层模型，但首版一律延迟创建 Authentik invitation**；
-3. **`POST /api/v1/auth/post-login` 作为幂等收口入口**；
-4. **`/auth/access` 永远返回 `200`，仅用于状态判断**；
-5. **`workspace-entry` 是唯一跳转入口，前端只在 `ready=true` 时跳转**；
-6. **runtime 删除改为 `POST /api/v1/users/me/runtime/delete`，不再依赖 DELETE body**；
-7. **所有 workspace 子域名必须统一经过 Traefik + Authentik Forward Auth**。
+1. **管理员初始化统一按 `akadmin` 口径处理**
+2. **Invitation 采用双层模型，但首版一律延迟创建 Authentik invitation**
+3. **`POST /api/v1/auth/post-login` 作为幂等收口入口**
+4. **`/auth/access` 永远返回 `200`，仅用于状态判断**
+5. **`workspace-entry` 是唯一跳转入口，前端只在 `ready=true` 时跳转**
+6. **runtime 删除改为 `POST /api/v1/users/me/runtime/delete`，不再依赖 DELETE body**
+7. **所有 workspace 子域名必须统一经过 Traefik + Authentik Forward Auth**
+8. **RuntimeManager internal 接口同步执行，`taskId` 只存在于 Orchestrator 对外层**
+9. **V1 runtime 统一使用 `clawloops_shared`、`18789`、固定 alias 与固定镜像**
 
 ---
 
-v0.7-authentik-frozen  
+v0.8-authentik-runtime-frozen  
 reno  
 2026-03-23

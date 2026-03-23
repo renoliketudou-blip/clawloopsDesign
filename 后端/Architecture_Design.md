@@ -1,13 +1,14 @@
-# ClawLoops 平台设计文档（Authentik 官方首版接入版，冻结修订）
 
-基于既有 MVP 架构，按“**首版直接用官方 Authentik、不改源码、Docker 分容器同网络、当前仅本地账号密码、后续再接外部身份源**”重构后的统一版本。
+# ClawLoops 平台设计文档（Authentik 官方首版接入版，运行时冻结修订）
+
+基于既有 MVP 架构，按“**首版直接用官方 Authentik、不改源码、Docker 分容器、共享网络固定、当前仅本地账号密码、后续再接外部身份源**”重构后的统一版本。
 
 | 文档定位 | 系统架构与 MVP 落地设计 |
 | --- | --- |
 | 适用范围 | 单机部署、多用户访问、容器级隔离、统一模型网关、官方 Authentik 身份接入 |
-| 本版重点 | 冻结管理员初始化口径、邀请制接入规则、首登密码流程、Traefik + Outpost 前置鉴权与 runtime 跳转语义 |
-| 关联文档 | 《MVP 开发基线总契约》《MVP 统一总接口》《Authentik 实施文档》 |
-| 当前版本 | v0.7-authentik-frozen |
+| 本版重点 | 冻结管理员初始化口径、邀请制接入规则、首登密码流程、Traefik + Outpost 前置鉴权，以及 runtime V1 contract |
+| 关联文档 | 《MVP 开发基线总契约》《MVP 统一总接口》《RuntimeManager 开发契约》《Authentik 实施文档》 |
+| 当前版本 | v0.8-authentik-runtime-frozen |
 
 ---
 
@@ -15,15 +16,15 @@
 
 本版明确采用如下落地结论：
 
-- 首版身份系统直接采用 **官方 Authentik**。
-- **不修改 OpenClaw / 上游源码**；只改 ClawLoops 控制面、部署层、网关层与业务绑定逻辑。
-- Docker 采用 **分容器、同网络**：Traefik、ClawLoops、Runtime Manager、Authentik Core、Authentik Proxy Outpost、LiteLLM、PostgreSQL 等处于同一内部网络。
-- 当前只开放 **本地账号密码**；Google / GitHub / 企业 SSO / 微信 / 钉钉 / 飞书全部列为后续扩展。
-- 所有 workspace 子域名继续统一经 **Traefik + Authentik Proxy Outpost + Forward Auth** 做前置鉴权。
-- 普通用户接入采用 **邀请制**：管理员创建 invitation，邀请绑定 `workspace / role`，链接携带 ClawLoops 平台 token，用户点击后进入“完成接入”流程。
-- 首版 invitation 采用 **双层模型 + 延迟创建**：创建 invitation 时只生成 ClawLoops 业务 token；用户调用 `/start` 时再创建或换取 Authentik enrollment URL。
-- 推荐把“首次免密码链接进入”冻结为：**邀请链接本身就是一次性免密码入口**；用户在 Authentik Enrollment Flow 中完成资料和密码设置，然后自动登录。
-- 密码修改、重置、设置原则上全部交给 **Authentik Flow** 完成；平台不自行实现一套独立密码系统。
+- 首版身份系统直接采用 **官方 Authentik**
+- **不修改 OpenClaw / 上游源码**；只改 ClawLoops 控制面、部署层、网关层与业务绑定逻辑
+- 平台运行链路统一使用共享网络 **`clawloops_shared`**
+- 首版只开放 **本地账号密码**
+- 所有 workspace 子域名继续统一经 **Traefik + Authentik Proxy Outpost + Forward Auth** 做前置鉴权
+- 普通用户接入采用 **邀请制**
+- 首版 invitation 采用 **双层模型 + 延迟创建**
+- 首版 runtime 采用 **固定镜像 + 固定命令 + 固定端口 + 固定 alias + `compat` 必填** 的冻结契约
+- RuntimeManager 是**同步执行器**；Orchestrator 才是对用户侧暴露任务的**异步编排器**
 
 ---
 
@@ -31,21 +32,21 @@
 
 目标是在一台服务器上部署公司内部 ClawLoops 平台，使平台满足以下能力：
 
-1. 官方 Authentik 统一身份接入。
-2. 平台管理员可完成首版初始化与用户邀请。
-3. 普通用户通过邀请链接接入系统，并绑定指定 workspace / role。
-4. 用户进入平台后，继续按既有设计使用个人 runtime 工作区。
-5. workspace 入口统一由 Traefik 暴露，由 Authentik 做前置鉴权。
-6. 平台仍坚持“管理员提供服务、用户只使用”的团队平台模式。
+1. 官方 Authentik 统一身份接入
+2. 平台管理员可完成首版初始化与用户邀请
+3. 普通用户通过邀请链接接入系统，并绑定指定 workspace / role
+4. 用户进入平台后，继续按既有设计使用个人 runtime 工作区
+5. workspace 入口统一由 Traefik 暴露，由 Authentik 做前置鉴权
+6. 平台仍坚持“管理员提供服务、用户只使用”的团队平台模式
 
 MVP 仍然不追求：
 
-- 复杂多租户隔离 UI；
-- 用户自助 provider key 管理；
-- 用户自助模型绑定；
-- 复杂费用管理；
-- 企业级目录同步首版接入；
-- 微信 / 钉钉 / 飞书等第三方登录首版上线。
+- 复杂多租户隔离 UI
+- 用户自助 provider key 管理
+- 用户自助模型绑定
+- 复杂费用管理
+- 企业级目录同步首版接入
+- 微信 / 钉钉 / 飞书等第三方登录首版上线
 
 | 范围 | MVP 结论 |
 | --- | --- |
@@ -55,28 +56,29 @@ MVP 仍然不追求：
 | 邀请机制 | 平台 invitation + Authentik enrollment flow 组合，且首版延迟创建身份侧 invitation |
 | 工作区访问 | Traefik + Authentik Forward Auth |
 | 用户密码 | 全部交给 Authentik 管理 |
+| runtime V1 | 固定镜像、固定端口、固定网络、固定 alias、`compat` 必填 |
 | 外部身份源 | 后续扩展，不在首版启用 |
 
 ---
 
 ## 2. 为什么本版必须冻结这些规则
 
-原因不是因为原方案错误，而是因为原文档虽已引入 Authentik，但还没有把以下关键事实冻结成可开发的基线：
+原因不是因为原方案错误，而是因为原文档虽已引入 Authentik，但还没有把以下关键事实冻结成可开发基线：
 
-1. **首次启动管理员引导** 没有统一写死为 `akadmin` bootstrap 管理员口径。
-2. **邀请制接入** 缺少明确生命周期：平台 token 与 Authentik `itoken` 的边界、何时创建身份侧 invitation、何时消费业务 invitation。
-3. **本地账号密码首版、外部身份源后加** 还没有写成不能漂移的硬规则。
-4. **用户密码修改与强制改密由 Authentik Flow 管理** 没有落成接口级禁区。
-5. **post-login 收口** 缺少幂等与事务定义。
-6. **Traefik / Outpost / Forward Auth / workspace 子域名** 的关系需要从“概念接入”提升为“硬安全规则”。
+1. **首次启动管理员引导** 没有统一写死为 `akadmin`
+2. **邀请制接入** 缺少明确生命周期：平台 token 与 Authentik `itoken` 的边界、何时创建身份侧 invitation、何时消费业务 invitation
+3. **本地账号密码首版、外部身份源后加** 没有写成不能漂移的硬规则
+4. **用户密码修改与强制改密由 Authentik Flow 管理** 没有落成接口级禁区
+5. **post-login 收口** 缺少幂等与事务定义
+6. **Traefik / Outpost / Forward Auth / workspace 子域名** 的关系需要从概念接入提升为硬安全规则
+7. **runtime 基线** 仍存在 `imageRef`、端口、网络名、同步 / 异步边界、挂载与删除语义冲突
 
-因此本版文档不再只把 Authentik 看成“登录网关”，而是把它提升为：
+因此本版文档不再只把 Authentik 看成“登录网关”，也不再把 RuntimeManager 看成“模糊执行器”，而是一起冻结为：
 
-- 管理员首登与初始密码设置系统；
-- 本地用户目录与密码托管系统；
-- invitation enrollment 执行系统；
-- workspace 统一前置鉴权系统；
-- 未来外部身份源汇聚入口。
+- Authentik：身份、密码、会话、enrollment flow、前置鉴权
+- ClawLoops：业务真相、workspace / role、runtime 真相
+- Orchestrator：对外异步编排
+- RuntimeManager：对内同步执行 + 最小事实观测
 
 ---
 
@@ -93,21 +95,21 @@ MVP 仍然不追求：
 
 | 层级 | 核心组件 | 职责 |
 | --- | --- | --- |
-| 入口层 | Traefik | 统一暴露平台域名与 workspace 子域名；对所有受保护路由挂载 Authentik Forward Auth |
+| 入口层 | Traefik | 统一暴露平台域名与 workspace 子域名；对受保护路由挂载 Authentik Forward Auth |
 | 身份层 | Authentik Core + Proxy Outpost | 本地用户、会话、密码、邀请制 enrollment、前置鉴权、未来外部身份源接入 |
 | 平台层 | ClawLoops 控制面 | 用户同步、邀请绑定、workspace/role 真相、runtime 真相、后台治理 |
-| 编排层 | Runtime Orchestrator + Runtime Manager | runtime 启停删、配置挂载、状态回写 |
+| 编排层 | Runtime Orchestrator + Runtime Manager | runtime 启停删、配置挂载、状态回写；其中 Orchestrator 异步，RM 同步 |
 | 运行时层 | Per-user OpenClaw runtime | 用户个人工作区与本地运行环境 |
 | 模型层 | LiteLLM + PostgreSQL + vLLM/Ollama | 平台统一模型出口与用量归集 |
 
 ### 3.2 部署约束
 
-- 所有服务使用 **独立容器** 部署。
-- 所有容器加入同一内部 Docker 网络，例如 `clawloops_net`。
-- Authentik Core 对外只暴露平台登录所需入口。
-- Authentik Proxy Outpost 只负责前置鉴权，不承接业务逻辑。
-- ClawLoops 控制面保存业务真相；Authentik 保存身份真相。
-- internal API 必须通过服务间鉴权（mTLS 或 internal token）并禁止公网访问。
+- 所有服务使用**独立容器**部署
+- 平台运行链路统一依赖共享网络 **`clawloops_shared`**
+- `Traefik / ClawLoops API / RuntimeManager / LiteLLM / per-user runtime` 必须加入 `clawloops_shared`
+- Authentik 不要求所有组件都进入同一共享网络；最低要求是 `authentik-proxy-outpost` 与 Traefik / 受保护应用链路可达
+- ClawLoops 控制面保存业务真相；Authentik 保存身份真相
+- internal API 必须通过服务间鉴权（mTLS 或 internal token）并禁止公网访问
 
 ---
 
@@ -117,8 +119,8 @@ MVP 仍然不追求：
 
 首版需求本质分成两层：
 
-1. **身份能力**：用户是谁、如何登录、密码怎么管理、enrollment 怎么完成、会话怎么生效。
-2. **业务能力**：用户应该进哪个 workspace、拿什么 role、是不是已经被禁用、能不能打开 runtime。
+1. **身份能力**：用户是谁、如何登录、密码怎么管理、enrollment 怎么完成、会话怎么生效
+2. **业务能力**：用户应该进哪个 workspace、拿什么 role、是不是已经被禁用、能不能打开 runtime
 
 Authentik 非常适合承接第一层；ClawLoops 承接第二层。这样职责边界清晰、开发量最小、后续扩展最顺。
 
@@ -126,19 +128,15 @@ Authentik 非常适合承接第一层；ClawLoops 承接第二层。这样职责
 
 首版采用以下组合：
 
-- 平台控制面与 workspace 子域名统一由 Traefik 暴露。
-- Traefik 通过 Authentik Proxy Provider 的 **Forward Auth** 中间件做前置鉴权。
-- Authentik 当前只启用 **本地用户名 / 邮箱 + 密码** 登录。
-- 管理员在 ClawLoops 后台创建 invitation，ClawLoops 保存业务邀请码对象。
-- ClawLoops 在用户调用 `/start` 时延迟创建或换取 Authentik enrollment invitation。
-- 用户点击平台 invitation 链接后，被重定向进入 Authentik enrollment flow。
-- Authentik 负责创建用户、设置密码、建立登录会话。
-- 登录成功后，ClawLoops 在 `post-login` 根据 invitation 记录完成 `workspace / role` 绑定。
-
-这意味着：
-
-- **身份创建、密码校验、会话** 归 Authentik；
-- **workspace / role / user status / runtime** 归 ClawLoops。
+- 平台控制面与 workspace 子域名统一由 Traefik 暴露
+- Traefik 通过 Authentik Proxy Provider 的 **Forward Auth** 中间件做前置鉴权
+- Authentik 当前只启用 **本地用户名 / 邮箱 + 密码** 登录
+- 管理员在 ClawLoops 后台创建 invitation，ClawLoops 保存业务邀请码对象
+- ClawLoops 在用户调用 `/start` 时延迟创建或换取 Authentik enrollment invitation
+- 用户点击平台 invitation 链接后，被重定向进入 Authentik enrollment flow
+- Authentik 负责创建用户、设置密码、建立登录会话
+- 登录成功后，ClawLoops 在 `post-login` 根据 invitation 记录完成 `workspace / role` 绑定
+- runtime 启停删由 Orchestrator 发起异步任务，再调用 RM 的同步 internal API 完成实际执行
 
 ---
 
@@ -148,8 +146,8 @@ Authentik 非常适合承接第一层；ClawLoops 承接第二层。这样职责
 
 如果坚持“**不改官方源码**”，那么官方 Authentik 首次初始化默认管理员用户是 **`akadmin`**。因此：
 
-- “第一次登录的是管理员账号，并进入后设置自己的密码”——官方可以直接支持；
-- “这个账号的用户名必须字面叫 `admin`”——官方首个初始化账号默认不是 `admin`”。
+- “第一次登录的是管理员账号，并进入后设置自己的密码”——官方可以直接支持
+- “这个账号的用户名必须字面叫 `admin`”——官方首个初始化账号默认不是 `admin`”
 
 ### 5.2 首版冻结做法
 
@@ -157,16 +155,16 @@ Authentik 非常适合承接第一层；ClawLoops 承接第二层。这样职责
 
 首版落地流程：
 
-1. 启动 Authentik Core。
-2. 管理员访问 Authentik 官方 `initial-setup` 流程。
-3. 在浏览器中设置 bootstrap 管理员密码。
+1. 启动 Authentik Core
+2. 管理员访问 Authentik 官方 `initial-setup` 流程
+3. 在浏览器中设置 bootstrap 管理员密码
 4. 初始管理员进入后台后完成：
-   - 基础品牌配置；
-   - 本地认证流确认；
-   - Proxy Outpost / Provider 创建；
-   - ClawLoops 平台应用接入；
-   - invitation enrollment flow 导入或配置。
-5. 如有需要，可在后续额外创建日常使用的本地管理员账号 `admin`；但这不改变首个官方初始化管理员口径。
+   - 基础品牌配置
+   - 本地认证流确认
+   - Proxy Outpost / Provider 创建
+   - ClawLoops 平台应用接入
+   - invitation enrollment flow 导入或配置
+5. 如有需要，可在后续额外创建日常使用的本地管理员账号 `admin`；但这不改变首个官方初始化管理员口径
 
 ---
 
@@ -176,19 +174,19 @@ Authentik 非常适合承接第一层；ClawLoops 承接第二层。这样职责
 
 ### 6.1 规则
 
-- 登录页仅展示用户名 / 邮箱 + 密码。
-- 不显示 Google / GitHub / 企业 SSO / 微信 / 钉钉 / 飞书按钮。
-- 不配置外部 Source。
-- 平台首版用户全部为 Authentik 本地用户。
+- 登录页仅展示用户名 / 邮箱 + 密码
+- 不显示 Google / GitHub / 企业 SSO / 微信 / 钉钉 / 飞书按钮
+- 不配置外部 Source
+- 平台首版用户全部为 Authentik 本地用户
 
 ### 6.2 后续如何扩展
 
 后续接入外部身份源时，不需要推翻首版方案，只需要：
 
-- 在 Authentik 中新增对应 Source；
-- 把 Source 挂入 Identification Stage；
-- 在用户同步时扩展 `auth.method` 与 `subjectId` 映射；
-- 保持 ClawLoops 的业务真相不变。
+- 在 Authentik 中新增对应 Source
+- 把 Source 挂入 Identification Stage
+- 在用户同步时扩展 `auth.method` 与 `subjectId` 映射
+- 保持 ClawLoops 的业务真相不变
 
 ---
 
@@ -198,13 +196,13 @@ Authentik 非常适合承接第一层；ClawLoops 承接第二层。这样职责
 
 管理员希望做到：
 
-1. 创建一个 invitation；
-2. invitation 绑定一个目标 `workspace / role`；
-3. invitation 链接带一次性平台 token；
-4. 用户点击后进入“完成接入”页；
-5. 用户首次不需要提前知道密码；
-6. 用户完成接入后进入平台；
-7. 之后再按普通账号密码方式登录。
+1. 创建一个 invitation
+2. invitation 绑定一个目标 `workspace / role`
+3. invitation 链接带一次性平台 token
+4. 用户点击后进入“完成接入”页
+5. 用户首次不需要提前知道密码
+6. 用户完成接入后进入平台
+7. 之后再按普通账号密码方式登录
 
 ### 7.2 推荐实现方式
 
@@ -224,91 +222,73 @@ ClawLoops 自己保存业务真相：
 - `consumedByUserId`
 - `authentikInvitationRef`
 
-> 注意：首版不单独存 `expired` 状态，只存 `pending / consumed / revoked`；`expired` 由 `expiresAt < now` 推导。
-
 #### 第 2 层：Authentik enrollment invitation
 
 Authentik 负责执行身份侧 enrollment：
 
-- 执行 Invitation Stage / Enrollment Flow；
-- 在 flow 中完成用户创建 / 密码设置 / 登录会话建立；
-- 返回 `itoken` 形式的 enrollment URL。
+- 执行 Invitation Stage / Enrollment Flow
+- 在 flow 中完成用户创建 / 密码设置 / 登录会话建立
+- 返回 `itoken` 形式的 enrollment URL
 
 ### 7.3 为什么要双层 invitation
 
 因为：
 
-- `workspace / role` 是 **业务真相**，应该在 ClawLoops；
-- 用户密码 / 用户创建 / 会话是 **身份真相**，应该在 Authentik；
-- 这样未来你切换 invitation UI、增加审批、增加多 workspace 分发时，不需要重写身份系统。
+- `workspace / role` 是**业务真相**，应该在 ClawLoops
+- 用户密码 / 用户创建 / 会话是**身份真相**，应该在 Authentik
+- 这样未来你切换 invitation UI、增加审批、增加多 workspace 分发时，不需要重写身份系统
 
 ### 7.4 首版推荐时序（延迟创建）
 
-```mermaid
-sequenceDiagram
-    participant A as Admin
-    participant C as ClawLoops
-    participant K as Authentik
-    participant U as User
-
-    A->>C: 创建 invitation(workspaceId, role, targetEmail)
-    C->>C: 保存业务 invitation + platform token
-    C->>A: 返回 inviteUrl
-    A->>U: 发送邀请链接
-    U->>C: 打开 /invite/{token}
-    C->>C: 校验业务 invitation
-    U->>C: POST /public/invitations/{token}/start
-    C->>C: 写入 pending invitation session
-    C->>K: 延迟创建/换取 enrollment URL
-    C->>U: 返回 redirectUrl(带 itoken)
-    U->>K: 进入 enrollment flow
-    K->>K: Invitation Stage + Prompt + User Write + User Login
-    K->>C: 回到 POST /api/v1/auth/post-login
-    C->>C: sync user
-    C->>C: 邮箱强校验(targetEmail)
-    C->>C: 幂等消费 invitation + 绑定 workspace/role
-    C->>U: 跳转到 /workspace-entry
-```
+1. 管理员在 ClawLoops 创建 invitation
+2. ClawLoops 保存业务 invitation + platform token
+3. 用户打开 `/invite/{token}`
+4. 用户触发 `/public/invitations/{token}/start`
+5. ClawLoops 写入 pending invitation session
+6. ClawLoops 延迟创建 / 换取 Authentik enrollment URL
+7. 用户进入 enrollment flow
+8. Authentik 完成用户创建、密码设置与自动登录
+9. 浏览器回到 ClawLoops `post-login`
+10. ClawLoops 完成 user sync、邮箱强校验、membership 绑定与 invitation consume
+11. 用户进入工作台
 
 ### 7.5 token 语义冻结
 
-- **ClawLoops token 是业务入口真相**；
-- **Authentik `itoken` 是身份执行入口**；
-- 对外永远发 `https://clawloops.example.com/invite/{platform_token}`；
-- 不直接把 Authentik 原始 `itoken` 当成业务链接对外发送。
+- **ClawLoops token 是业务入口真相**
+- **Authentik `itoken` 是身份执行入口**
+- 对外永远发 `https://clawloops.example.com/invite/{platform_token}`
+- 不直接把 Authentik 原始 `itoken` 当成业务链接对外发送
 
 ### 7.6 “首次免密码链接进入”如何解释最合理
 
 冻结解释如下：
 
-- 用户第一次进入系统时，不需要预先知道密码；
-- 只需要打开 invitation 一次性链接；
-- 该 invitation 链接就是“首登免密码入口”；
-- 在 enrollment flow 中由用户自己设置密码；
-- 完成后自动登录。
-
-“先进入、下次再强制改密”降为二期扩展，不作为首版实现。
+- 用户第一次进入系统时，不需要预先知道密码
+- 只需要打开 invitation 一次性链接
+- 该 invitation 链接就是“首登免密码入口”
+- 在 enrollment flow 中由用户自己设置密码
+- 完成后自动登录
 
 ### 7.7 邮箱校验规则
 
-- 首版统一为 **强邮箱校验**；
-- 当前认证身份的邮箱必须匹配 invitation `targetEmail`；
-- 校验点固定放在 **post-login 阶段**，即已经拿到当前 `subjectId` 与 `email` 之后；
-- 不支持“允许覆盖”“管理员放行”等例外逻辑。
+- 首版统一为 **强邮箱校验**
+- 当前认证身份的邮箱必须匹配 invitation `targetEmail`
+- 校验点固定放在 **post-login 阶段**
+- 不支持“允许覆盖”“管理员放行”等例外逻辑
 
 ### 7.8 pending session 生命周期
 
-- `start` 后会写入 pending invitation session；
-- 该 session 必须具备 TTL（建议 10–30 分钟）；
-- 只绑定当前浏览器会话；
-- `start` 必须幂等：重复调用只复用一个有效 pending invitation session，不应生成多个并发会话。
+- `start` 后会写入 pending invitation session
+- 该 session 必须具备 TTL（建议 10–30 分钟）
+- 只绑定当前浏览器会话
+- `start` 必须幂等：重复调用只复用一个有效 pending invitation session，不应生成多个并发会话
 
 ### 7.9 撤销、过期、消费的联动规则
 
-- 平台 invitation 状态是最终业务真相；
-- `revoked / consumed / expired` 均需先由平台校验；
-- 即使身份侧 token 尚未过期，平台状态一旦失效也必须阻断 `start` 与 `post-login`；
-- 这也是首版推荐 **延迟创建 Authentik invitation** 的直接原因。
+- 平台 invitation 状态是最终业务真相
+- `revoked / consumed / expired` 均需先由平台校验
+- 即使身份侧 token 尚未过期，平台状态一旦失效也必须阻断 `start` 与 `post-login`
+- 这也是首版推荐**延迟创建 Authentik invitation**的直接原因
 
 ---
 
@@ -320,12 +300,10 @@ sequenceDiagram
 
 ### 8.2 管理员密码
 
-- 首次由官方初始化流程设置。
-- 后续通过 Authentik 自身用户设置或管理员操作修改。
+- 首次由官方初始化流程设置
+- 后续通过 Authentik 自身用户设置或管理员操作修改
 
 ### 8.3 普通用户密码
-
-#### 首版冻结模式：接入时直接设置密码
 
 Enrollment Flow 建议顺序：
 
@@ -334,22 +312,14 @@ Enrollment Flow 建议顺序：
 3. User Write Stage
 4. User Login Stage
 
-优点：
-
-- 流程简单；
-- 用户第一次完成接入后即可用密码正常登录；
-- 不需要额外实现“首次登录后强制再改一次密码”。
-
 ### 8.4 平台级禁区
 
 ClawLoops 明确禁止：
 
-- 保存用户密码；
-- 生成正式临时密码；
-- 提供密码落库接口；
-- 实现独立改密 API。
-
-所有密码设置、重置、修改统一走 Authentik Flow。
+- 保存用户密码
+- 生成正式临时密码
+- 提供密码落库接口
+- 实现独立改密 API
 
 ---
 
@@ -359,57 +329,68 @@ ClawLoops 明确禁止：
 
 | 字段 | 说明 |
 | --- | --- |
-| invitationId | 平台内部邀请唯一标识 |
-| inviteTokenHash | 平台一次性邀请码哈希 |
-| targetEmail | 目标邮箱；首版必填 |
-| workspaceId | 目标 workspace |
-| role | 目标角色，例如 `admin / user / workspace_member` |
-| status | `pending / consumed / revoked` |
-| expiresAt | 过期时间 |
-| consumedAt | 消费时间 |
-| consumedByUserId | 最终接入的用户 |
-| authentikInvitationRef | Authentik 侧 invitation 引用，首版延迟创建时允许为空 |
-| lastError | 最近一次生成或消费失败原因 |
-
-**边界原则**：
-
-- `workspaceId / role / status` 以 ClawLoops 为准；
-- `expired` 通过 `expiresAt < now` 推导；
-- `密码 / session / flow 执行` 以 Authentik 为准。
+| `invitationId` | 平台内部邀请唯一标识 |
+| `inviteTokenHash` | 平台一次性邀请码哈希 |
+| `targetEmail` | 目标邮箱；首版必填 |
+| `workspaceId` | 目标 workspace |
+| `role` | 目标角色，例如 `admin / user / workspace_member` |
+| `status` | `pending / consumed / revoked` |
+| `expiresAt` | 过期时间 |
+| `consumedAt` | 消费时间 |
+| `consumedByUserId` | 最终接入的用户 |
+| `authentikInvitationRef` | Authentik 侧 invitation 引用，首版延迟创建时允许为空 |
+| `lastError` | 最近一次生成或消费失败原因 |
 
 ---
 
-## 10. UserRuntimeBinding 保持不变，但访问前置条件改变
+## 10. UserRuntimeBinding 冻结结构与 runtime V1 基线
 
-`UserRuntimeBinding` 结构继续冻结如下：
+`UserRuntimeBinding` 继续冻结如下：
 
 | 字段 | 说明 |
 | --- | --- |
-| runtimeId | 平台内部 runtime 唯一标识 |
-| volumeId | 持久化卷标识 |
-| imageRef | 当前 runtime 镜像 |
-| desiredState | `running / stopped / deleted` |
-| observedState | `creating / running / stopped / error / deleted` |
-| browserUrl | 浏览器访问入口 |
-| internalEndpoint | 平台内部访问地址 |
-| retentionPolicy | `preserve_workspace / wipe_workspace` |
-| lastError | 最近一次失败信息 |
+| `runtimeId` | 平台内部 runtime 唯一标识（平台范围全局唯一） |
+| `volumeId` | 平台逻辑卷标识；不等同于宿主机路径 |
+| `imageRef` | 平台记录的 runtime 实际生效镜像；V1 固定为 digest，不允许调用方覆盖 |
+| `desiredState` | `running / stopped / deleted` |
+| `observedState` | `creating / running / stopped / error / deleted` |
+| `browserUrl` | 浏览器访问入口 |
+| `internalEndpoint` | 平台内部访问地址，V1 固定为 `http://rt-<runtimeId>:18789` |
+| `retentionPolicy` | `preserve_workspace / wipe_workspace` |
+| `lastError` | 最近一次失败信息 |
 
 ### 10.1 访问前置条件
 
 用户只有在下列条件同时满足时，才能把 `browserUrl` 当作可用入口：
 
-1. Authentik 会话有效；
-2. ClawLoops 用户状态为 `active`；
-3. 已完成合法 workspace 绑定；
-4. runtime 已达到最终可访问状态 `ready=true`。
+1. Authentik 会话有效
+2. ClawLoops 用户状态为 `active`
+3. 已完成合法 workspace 绑定
+4. runtime 已达到最终可访问状态 `ready=true`
 
-### 10.2 状态语义冻结
+### 10.2 runtime V1 冻结实施规则
 
-- `task.status` = 操作生命周期；
-- `observedState` = 资源状态；
-- `ready` = 最终可访问状态；
-- 前端跳转只看 `ready`。
+- V1 镜像固定为  
+  `ghcr.io/openclaw/openclaw@sha256:a5a4c83b773aca85a8ba99cf155f09afa33946c0aa5cc6a9ccb6162738b5da02`
+- 启动命令固定为  
+  `node dist/index.js gateway --bind lan --port 18789`
+- 共享网络固定为 `clawloops_shared`
+- `networkAlias` 固定为 `rt-<runtimeId>`
+- 主服务端口固定为 `18789`
+- `18790` 仅兼容保留，不作为 readiness 条件
+- `compat.openclawConfigDir / compat.openclawWorkspaceDir` 必填
+- `configMount` 是可选增强挂载，不替代 `compat`
+- `configMount.configFilePath -> /home/node/.openclaw/openclaw.json:ro`
+- `configMount.secretFilePath -> /run/clawloops/secrets/gateway.token:ro`
+- `routeHost` 在 RM 中只作 label 追踪，不参与容器启动逻辑，也不属于关键 drift
+- RM 只检测 drift 并返回 `409 RUNTIME_CONTRACT_DRIFT`，不自己做 stop+delete+recreate
+
+### 10.3 状态语义冻结
+
+- `task.status` = 操作生命周期
+- `observedState` = 资源状态
+- `ready` = 最终可访问状态
+- 前端跳转只看 `ready`
 
 ---
 
@@ -419,10 +400,10 @@ ClawLoops 明确禁止：
 
 首版继续采用：
 
-- Traefik 统一路由；
-- Authentik Proxy Outpost；
-- Forward Auth；
-- workspace 子域名前置鉴权。
+- Traefik 统一路由
+- Authentik Proxy Outpost
+- Forward Auth
+- workspace 子域名前置鉴权
 
 ### 11.2 路由模型
 
@@ -434,10 +415,10 @@ ClawLoops 明确禁止：
 
 ### 11.3 安全模型
 
-- `browserUrl` 不是匿名公开地址；
-- 知道 URL 不等于可以访问；
-- **所有 workspace 子域名必须统一经过 Traefik + Authentik Forward Auth**；
-- ClawLoops 仍需在业务层检查用户状态、workspace 归属和 runtime 状态。
+- `browserUrl` 不是匿名公开地址
+- 知道 URL 不等于可以访问
+- 所有 workspace 子域名必须统一经过 Traefik + Authentik Forward Auth
+- ClawLoops 仍需在业务层检查用户状态、workspace 归属和 runtime 状态
 
 ---
 
@@ -445,12 +426,13 @@ ClawLoops 明确禁止：
 
 | 模块 | 修订后的职责 |
 | --- | --- |
-| 模块 1：身份与访问接入 | 接收 Authentik 会话上下文；同步/创建 ClawLoops 用户；识别 admin / disabled；处理 post-login invitation 收口；执行邮箱强校验 |
-| 模块 2：租户与用户资源控制 | 维护 User / Invitation / WorkspaceMembership / UserRuntimeBinding 真相；binding 首建归口；保证 invitation consume 与 membership binding 的原子性或补偿逻辑 |
-| 模块 3：Runtime 编排 | 不处理身份认证；只在用户身份与业务绑定合法后处理 runtime |
+| 模块 1：身份与访问接入 | 接收 Authentik 会话上下文；同步 / 创建 ClawLoops 用户；识别 admin / disabled；处理 post-login invitation 收口；执行邮箱强校验 |
+| 模块 2：租户与用户资源控制 | 维护 User / Invitation / WorkspaceMembership / UserRuntimeBinding 真相；保证 invitation consume 与 membership binding 的原子性或补偿逻辑 |
+| 模块 3：Runtime 编排 | 对用户侧暴露异步任务；决定何时调用 RM；在收到 drift 后决定是否 stop+delete+recreate |
 | 模块 4：模型接入 | 不变 |
 | 模块 5：管理后台 | 新增 invitation 创建、查看、撤销；仍负责用户治理 |
 | 模块 6：用户工作台 | 新增“邀请完成后首次进入”承接逻辑；工作区跳转只依赖 `workspace-entry` |
+| RuntimeManager | 同步执行容器动作、目录初始化、最小事实观测；不维护外层任务状态机 |
 
 ---
 
@@ -458,50 +440,53 @@ ClawLoops 明确禁止：
 
 ### 13.1 首次安装与管理员初始化
 
-1. 运维启动 Authentik Core 与依赖容器。
-2. 管理员打开官方初始化入口。
-3. 设置 bootstrap 管理员 `akadmin` 的密码。
+1. 运维启动 Authentik Core 与依赖容器
+2. 管理员打开官方初始化入口
+3. 设置 bootstrap 管理员 `akadmin` 的密码
 4. 登录 Authentik 后创建：
-   - ClawLoops 平台应用；
-   - Proxy Provider / Outpost；
-   - Enrollment Flow；
-   - 本地登录规则。
-5. ClawLoops 控制面开始接收 Authentik 会话并同步管理员用户。
+   - ClawLoops 平台应用
+   - Proxy Provider / Outpost
+   - Enrollment Flow
+   - 本地登录规则
+5. ClawLoops 控制面开始接收 Authentik 会话并同步管理员用户
 
 ### 13.2 管理员创建 invitation
 
-1. 管理员在 ClawLoops 后台选择目标 `workspace / role` 并填写邮箱。
-2. 模块 5 调模块 2 创建 `Invitation`。
-3. 模块 2 生成一次性平台 token，并保存 invitation。
-4. 系统返回可发送的 invite URL。
-5. 不在此时创建 Authentik invitation。
+1. 管理员在 ClawLoops 后台选择目标 `workspace / role` 并填写邮箱
+2. 模块 5 调模块 2 创建 `Invitation`
+3. 模块 2 生成一次性平台 token，并保存 invitation
+4. 系统返回可发送的 invite URL
+5. 不在此时创建 Authentik invitation
 
 ### 13.3 用户完成接入
 
-1. 用户打开 invitation URL。
-2. ClawLoops 校验平台 token，确认未过期、未撤销、未消费。
-3. 用户点击继续接入，ClawLoops 把当前 invitation 上下文写入短期 session / cookie。
-4. ClawLoops 延迟创建或换取 Authentik enrollment URL，并重定向。
-5. Authentik 完成 invitation 校验、用户写入、密码写入与自动登录。
-6. 浏览器回到 ClawLoops `post-login` 入口。
-7. 模块 1 完成 `/internal/users/sync`。
-8. 模块 1 执行邮箱强校验。
-9. 模块 2 幂等完成 `workspace / role` 绑定，并把 invitation 标记为 `consumed`。
-10. 用户进入工作台并可启动 runtime。
+1. 用户打开 invitation URL
+2. ClawLoops 校验平台 token，确认未过期、未撤销、未消费
+3. 用户点击继续接入，ClawLoops 把当前 invitation 上下文写入短期 session / cookie
+4. ClawLoops 延迟创建或换取 Authentik enrollment URL，并重定向
+5. Authentik 完成 invitation 校验、用户写入、密码写入与自动登录
+6. 浏览器回到 ClawLoops `post-login` 入口
+7. 模块 1 完成 `/internal/users/sync`
+8. 模块 1 执行邮箱强校验
+9. 模块 2 幂等完成 `workspace / role` 绑定，并把 invitation 标记为 `consumed`
+10. 用户进入工作台并可启动 runtime
 
-### 13.4 用户再次登录
+### 13.4 用户启动 runtime
 
-1. 用户访问平台域名。
-2. Traefik 把请求交给 Authentik 前置鉴权。
-3. 用户走本地用户名/邮箱 + 密码登录。
-4. 模块 1 校验并同步当前用户状态。
-5. 模块 6 获取工作台信息。
+1. 用户调用 `POST /api/v1/users/me/runtime/start`
+2. 模块 3 创建异步任务并返回 `taskId`
+3. 模块 3 计算 effectiveRetentionPolicy、host path 绑定、固定镜像与固定命令
+4. 模块 3 调 RM 的 `POST /internal/runtime-manager/containers/ensure-running`
+5. RM 同步执行目录初始化、挂载、网络接入与启动探测
+6. RM 立即返回当前 `observedState`
+7. 模块 3 把结果写回 runtime task 与 binding
+8. 前端通过 `/api/v1/runtime/tasks/{taskId}` + `/api/v1/users/me/runtime/status` 观察最终状态
 
 ### 13.5 post-login 幂等要求
 
-- 用户刷新页面、浏览器重试、网络抖动时，不得产生重复 membership；
-- 同一 `invitationId + userId` 只能成功消费一次；
-- 重复调用返回已消费 / 已绑定的最终结果。
+- 用户刷新页面、浏览器重试、网络抖动时，不得产生重复 membership
+- 同一 `invitationId + userId` 只能成功消费一次
+- 重复调用返回已消费 / 已绑定的最终结果
 
 ---
 
@@ -523,32 +508,56 @@ ClawLoops 明确禁止：
 - `litellm`
 - `litellm-postgresql`
 
-全部接入 `clawloops_net`。
+### 14.2 共享网络建议
 
-### 14.2 不改源码的真正含义
+推荐统一定义：
+
+```yaml
+networks:
+  clawloops_shared:
+    driver: bridge
+```
+
+最低必须接入该网络的容器：
+
+- `traefik`
+- `clawloops-api`
+- `runtime-manager`
+- `litellm`
+- per-user runtime
+
+关于 Authentik：
+
+- 最低要求是 `authentik-proxy-outpost` 与受保护应用链路可达
+- 不强制 `authentik-postgresql / authentik-redis` 暴露到同一共享网络
+
+### 14.3 不改源码的真正含义
 
 这里的“不改源码”指：
 
-- 不 fork / patch Authentik；
-- 不改 OpenClaw 上游源码；
+- 不 fork / patch Authentik
+- 不改 OpenClaw 上游源码
 - 只在你自己的平台代码中增加：
-  - invitation 业务对象；
-  - Authentik 回调承接；
-  - 用户同步；
-  - workspace/role 绑定；
-  - Traefik / Outpost 部署配置。
+  - invitation 业务对象
+  - Authentik 回调承接
+  - 用户同步
+  - workspace / role 绑定
+  - Orchestrator 任务编排
+  - RuntimeManager 执行器
+  - Traefik / Outpost 部署配置
 
 ---
 
 ## 15. 首版明确不做的事
 
-- 不把 workspace / role 业务真相塞进 Authentik 作为唯一真相；
-- 不在首版开放 Google / GitHub / 企业 SSO / 微信 / 钉钉 / 飞书；
-- 不做多因素认证强制；
-- 不做多 runtime / 多 workspace 自助切换；
-- 不做复杂邀请审批流；
-- 不做平台自研密码系统；
-- 不把“先 magic link、后强制改密”作为首版流程。
+- 不把 workspace / role 业务真相塞进 Authentik 作为唯一真相
+- 不在首版开放 Google / GitHub / 企业 SSO / 微信 / 钉钉 / 飞书
+- 不做多因素认证强制
+- 不做多 runtime / 多 workspace 自助切换
+- 不做复杂邀请审批流
+- 不做平台自研密码系统
+- 不把“先 magic link、后强制改密”作为首版流程
+- 不让 RuntimeManager 自己做复杂补偿编排或自动重建
 
 ---
 
@@ -556,15 +565,15 @@ ClawLoops 明确禁止：
 
 ### 16.1 第二阶段
 
-- 接入 Google / GitHub 登录；
-- 在 Authentik 中新增 Source，并挂入 Identification Stage；
-- 扩展 `auth.method` 与 `subjectId` 兼容逻辑。
+- 接入 Google / GitHub 登录
+- 在 Authentik 中新增 Source，并挂入 Identification Stage
+- 扩展 `auth.method` 与 `subjectId` 兼容逻辑
 
 ### 16.2 第三阶段
 
-- 企业 SSO（OIDC / SAML）；
-- SCIM / 目录同步；
-- 更复杂的用户生命周期管理。
+- 企业 SSO（OIDC / SAML）
+- SCIM / 目录同步
+- 更复杂的用户生命周期管理
 
 ### 16.3 中国企业身份源阶段
 
@@ -578,19 +587,21 @@ ClawLoops 明确禁止：
 
 ## 17. 最终设计结论
 
-首版最稳妥的方案不是“把所有认证逻辑都写进 ClawLoops”，而是：
+首版最稳妥的方案不是“把所有认证逻辑都写进 ClawLoops”，也不是“让 RuntimeManager 自己补偿一切”，而是：
 
-- **Authentik 负责身份与密码**；
-- **ClawLoops 负责业务绑定与资源治理**；
-- **Traefik + Outpost 负责统一前置鉴权**；
-- **Invitation 用双层模型把业务 token 与身份 enrollment 解耦，并在首版采用延迟创建**；
-- **首版只开本地账号密码，后续再逐步加外部身份源**；
-- **工作区跳转统一收敛到 `workspace-entry`，且前端只在 `ready=true` 时跳转**。
+- **Authentik 负责身份与密码**
+- **ClawLoops 负责业务绑定与资源治理**
+- **Traefik + Outpost 负责统一前置鉴权**
+- **Invitation 用双层模型把业务 token 与身份 enrollment 解耦，并在首版采用延迟创建**
+- **首版只开本地账号密码，后续再逐步加外部身份源**
+- **工作区跳转统一收敛到 `workspace-entry`，且前端只在 `ready=true` 时跳转**
+- **Orchestrator 负责对外异步编排，RuntimeManager 负责对内同步执行**
+- **runtime V1 统一固定为 `clawloops_shared + 18789 + rt-<runtimeId> + compat 必填`**
 
 这样既满足当前诉求，也不会把首版做成难以演进的临时拼装方案。
 
 ---
 
-v0.7-authentik-frozen  
+v0.8-authentik-runtime-frozen  
 reno  
 2026-03-23

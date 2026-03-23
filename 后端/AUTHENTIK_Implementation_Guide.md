@@ -1,12 +1,11 @@
-# ClawLoops × 官方 Authentik 实施文档（冻结修订）
+# ClawLoops × 官方 Authentik 实施文档（运行时冻结修订）
 
 这份文档是给你直接在 Cursor 里开干用的，不再停留在“讨论方案”，而是明确到：
 
-- 你现在的文档应该怎么改；
-- 官方 Authentik 能做到什么；
-- 哪些地方要由 ClawLoops 自己补一层；
-- 首版应该如何拆任务；
-- 接口、部署、流程、代码落点如何安排。
+- 官方 Authentik 首版该怎么接
+- ClawLoops 自己还要补哪些业务层能力
+- RuntimeManager / Orchestrator 的新冻结边界是什么
+- 部署、流程、接口、代码落点如何安排
 
 ---
 
@@ -14,18 +13,19 @@
 
 ### 1.1 你的文档要不要改？
 
-**要改，而且建议一次性改到位。**
+**要改，而且这次要把 Authentik 与 runtime V1 一起改到能冻结开发。**
 
-本次必须冻结的点不止 4 个，而是至少包括：
+本次必须冻结的点至少包括：
 
-1. 把 Authentik 从“只是登录入口”升级为“正式身份系统”。
-2. 把 invitation 从一句需求，升级成完整的业务对象与时序。
-3. 把“首版只开本地账号密码”写成硬规则。
-4. 把“密码管理全部交给 Authentik”写进架构、契约、接口三份文档。
-5. 把管理员初始账号口径统一冻结为官方默认 `akadmin`。
-6. 把 invitation 生命周期统一冻结为“双层模型 + 延迟创建”。
-7. 把 `post-login`、`start` 的幂等性和事务边界写清楚。
-8. 把 workspace 子域名保护、`ready=true` 跳转规则、字段命名冻结写成强规则。
+1. 把 Authentik 从“只是登录入口”升级为“正式身份系统”
+2. 把 invitation 从一句需求升级成完整的业务对象与时序
+3. 把“首版只开本地账号密码”写成硬规则
+4. 把“密码管理全部交给 Authentik”写进架构、契约、接口三份文档
+5. 把管理员初始账号口径统一冻结为官方默认 `akadmin`
+6. 把 invitation 生命周期统一冻结为“双层模型 + 延迟创建”
+7. 把 `post-login`、`start` 的幂等性和事务边界写清楚
+8. 把 workspace 子域名保护、`ready=true` 跳转规则、字段命名冻结写成强规则
+9. 把 runtime 的 `imageRef / 18789 / clawloops_shared / compat / drift / 同步边界` 一次性定死
 
 ### 1.2 官方 Authentik 能否满足你的需求？
 
@@ -42,24 +42,27 @@
 - Recovery / User Settings / 强制改密能力
 - Proxy Outpost + Traefik Forward Auth
 
-不能直接只靠 Authentik 独立解决、建议由你平台负责的部分：
+不能直接只靠 Authentik 独立解决、建议由 ClawLoops 负责的部分：
 
 - invitation 绑定 `workspace / role`
 - invitation 的业务有效性与是否已消费
 - 用户第一次进来后该进哪个 workspace
 - runtime 是否允许启动
 - disabled / quota / runtime 资源治理
+- `volumeId -> host path` 解析与 runtime drift 重建决策
 
 ### 1.3 首版推荐方案
 
-**推荐的首版不是“平台自己写认证”，也不是“把业务全塞进 Authentik”，而是下面这套：**
+推荐的首版不是“平台自己写认证”，也不是“把业务全塞进 Authentik”，而是下面这套：
 
-- Authentik 负责身份、密码、会话、enrollment flow。
-- ClawLoops 负责 workspace / role / invitation / runtime 业务真相。
-- Traefik + Outpost 负责前置鉴权。
-- 首版只启用本地账号密码。
-- 邀请链接走“平台 token + enrollment flow”模式。
-- 身份侧 invitation 在 `start` 阶段延迟创建，不在管理员创建 invitation 时预生成。
+- Authentik 负责身份、密码、会话、enrollment flow
+- ClawLoops 负责 `workspace / role / invitation / runtime` 业务真相
+- Traefik + Outpost 负责前置鉴权
+- 首版只启用本地账号密码
+- 邀请链接走“平台 token + enrollment flow”模式
+- 身份侧 invitation 在 `start` 阶段延迟创建，不在管理员创建 invitation 时预生成
+- Orchestrator 对用户侧暴露异步任务
+- RuntimeManager 对内部执行层暴露同步接口
 
 ---
 
@@ -73,22 +76,20 @@
 
 不推荐理解成：
 
-1. 先 magic link 直接登录；
-2. 进入系统后再弹一个强制改密流程；
-3. 平台自己再维护一个“首次登录状态机”。
-
-因为首版这样做会把流程拉长，而且平台和 Authentik 会出现职责重叠。
+1. 先 magic link 直接登录
+2. 进入系统后再弹一个强制改密流程
+3. 平台自己再维护一个“首次登录状态机”
 
 ### 2.2 推荐的理解
 
 推荐把它理解成：
 
-1. 用户第一次不需要预先知道密码；
-2. 用户通过 **一次性 invitation 链接** 进入；
-3. 这个 invitation 链接本身就是“首次免密码入口”；
-4. 在 Authentik 的 enrollment flow 里，用户填写资料并设置密码；
-5. 完成后由 Authentik 自动登录；
-6. ClawLoops 根据 invitation 完成 workspace / role 绑定。
+1. 用户第一次不需要预先知道密码
+2. 用户通过**一次性 invitation 链接**进入
+3. 这个 invitation 链接本身就是“首次免密码入口”
+4. 在 Authentik 的 enrollment flow 里，用户填写资料并设置密码
+5. 完成后由 Authentik 自动登录
+6. ClawLoops 根据 invitation 完成 `workspace / role` 绑定
 
 ---
 
@@ -97,13 +98,16 @@
 ```text
 首版直接用官方 Authentik
 不改源码
-Docker 分容器、同网络
+Docker 分容器部署
+平台运行链路统一使用 clawloops_shared
 首个初始化管理员按默认 akadmin
 只开本地账号密码
 后续再加微信/飞书/钉钉/Google/GitHub/企业 SSO
+RuntimeManager internal API 同步执行
+Orchestrator 对外异步返回 taskId
 ```
 
-把这 6 条当成首版硬边界，不要在开发中途漂移。
+把这几条当成首版硬边界，不要在开发中途漂移。
 
 ---
 
@@ -127,24 +131,36 @@ Docker 分容器、同网络
 
 ### 4.2 Docker 网络
 
-建议统一加入一个内部网络，例如：
+建议统一定义：
 
 ```yaml
 networks:
-  clawloops_net:
+  clawloops_shared:
     driver: bridge
 ```
 
-### 4.3 为什么一定要同网络
+最低必须接入该网络的容器：
+
+- `traefik`
+- `clawloops-api`
+- `runtime-manager`
+- `litellm`
+- per-user runtime
+
+关于 Authentik：
+
+- 不要求所有 Authentik 组件都进入 `clawloops_shared`
+- 最低要求是 `authentik-proxy-outpost` 与 Traefik / 受保护应用网络可达
+- `authentik-postgresql / authentik-redis` 通常不需要暴露到该共享网络
+
+### 4.3 为什么一定要有共享网络
 
 因为首版需要同时满足：
 
 - Traefik 能访问 ClawLoops 与 Outpost
 - Outpost 能访问 Authentik Core
-- ClawLoops 能访问 Authentik 管理接口（若你用 API/脚本初始化）
-- Runtime Manager 能访问内部服务
-
-同网络最省事，也最符合你当前单机部署模型。
+- runtime 能通过 `http://litellm:4000` 访问 LiteLLM
+- RuntimeManager 能把 per-user runtime 接入统一服务发现平面
 
 ---
 
@@ -175,14 +191,14 @@ networks:
 
 推荐处理方式：
 
-1. 首次用官方初始化管理员完成配置；
-2. 在 Authentik 里新增本地管理员 `admin`；
-3. `admin` 成为日常使用管理员；
-4. 原始 bootstrap 管理员只保留 break-glass 用途。
+1. 首次用官方初始化管理员完成配置
+2. 在 Authentik 里新增本地管理员 `admin`
+3. `admin` 成为日常使用管理员
+4. 原始 bootstrap 管理员只保留 break-glass 用途
 
 ### 5.3 首版正式建议
 
-**建议你接受“管理员角色首登”这个定义，而不是执着用户名必须写死 `admin`。**
+**建议接受“管理员角色首登”这个定义，而不是执着用户名必须写死 `admin`。**
 
 ---
 
@@ -222,16 +238,16 @@ networks:
 
 你要得到的效果是：
 
-- 登录页只看到本地账号密码；
-- 不出现其他 Source 按钮；
-- 登录成功后能回到 ClawLoops。
+- 登录页只看到本地账号密码
+- 不出现其他 Source 按钮
+- 登录成功后能回到 ClawLoops
 
 ### 7.3 你在 Cursor 里实现时对应的系统边界
 
-- Authentik 决定“这个人登录成功没有”。
-- ClawLoops 决定“这个人虽然登录了，但是否可访问业务”。
+- Authentik 决定“这个人登录成功没有”
+- ClawLoops 决定“这个人虽然登录了，但是否可访问业务”
 
-换句话说：
+也就是说：
 
 - 认证成功 ≠ 业务允许
 - ClawLoops 还要检查 `user.status / workspace membership / runtime rules`
@@ -240,11 +256,9 @@ networks:
 
 ## 8. 邀请流的推荐实现
 
-这是首版的核心。
-
 ### 8.1 业务对象设计
 
-建议你在 ClawLoops 数据库增加 `invitations` 表，至少包含：
+建议在 ClawLoops 数据库增加 `invitations` 表，至少包含：
 
 ```sql
 id
@@ -266,7 +280,7 @@ updated_at
 
 ### 8.2 为什么不能只靠 Authentik invitation
 
-因为你真正要绑定的是：
+因为真正要绑定的是：
 
 - `workspaceId`
 - `role`
@@ -336,8 +350,6 @@ Enrollment Flow 建议顺序：
 
 #### 第五步：登录成功回到 ClawLoops
 
-回到 `POST /api/v1/auth/post-login` 或等价的 BFF 路由。
-
 系统动作：
 
 1. 用 Authentik 会话识别当前用户
@@ -349,20 +361,20 @@ Enrollment Flow 建议顺序：
 7. 清理 cookie / session
 8. 跳工作台
 
-### 8.5 start 与 post-login 的关键规则
+### 8.5 `start` 与 `post-login` 的关键规则
 
-- `start` 必须幂等；
-- 同一浏览器会话只保留一个有效 pending invitation session；
-- pending session TTL 建议 10–30 分钟；
-- `post-login` 必须幂等；
-- 同一 `invitationId + userId` 只能成功消费一次；
-- `consume invitation` 与 `workspace membership binding` 必须原子，或定义清晰补偿逻辑。
+- `start` 必须幂等
+- 同一浏览器会话只保留一个有效 pending invitation session
+- pending session TTL 建议 10–30 分钟
+- `post-login` 必须幂等
+- 同一 `invitationId + userId` 只能成功消费一次
+- `consume invitation` 与 `workspace membership binding` 必须原子，或定义清晰补偿逻辑
 
 ### 8.6 邮箱校验固定位置
 
-- 邮箱强校验统一放在 `post-login` 阶段执行；
-- 即已经拿到 `subjectId` 与 `email` 之后再比对 `targetEmail`；
-- 不要把邮箱校验漂移到 preview、start 或前端页面逻辑里。
+- 邮箱强校验统一放在 `post-login` 阶段执行
+- 即已经拿到 `subjectId` 与 `email` 之后再比对 `targetEmail`
+- 不要把邮箱校验漂移到 preview、start 或前端页面逻辑里
 
 ---
 
@@ -380,10 +392,10 @@ Enrollment Flow 建议顺序：
 
 ### 9.2 为什么这比“进来后再改密”更好
 
-因为你会少掉一整层状态管理：
+因为会少掉一整层状态管理：
 
 - 不需要“首次登录成功但尚未改密”的中间态
-- 不需要你平台自己写“首次改密强跳页”
+- 不需要平台自己写“首次改密强跳页”
 - 不需要多一次跳转
 
 ### 9.3 平台明确禁止的事
@@ -416,14 +428,30 @@ Enrollment Flow 建议顺序：
 - quota / usage / 模型治理
 - 后台 invitation 管理
 
-### 10.3 不要混淆的点
+### 10.3 Runtime Orchestrator 负责
 
-不要让 Authentik 成为 `workspace / role` 的唯一真相库。
+- 用户侧异步 task 生命周期
+- `volumeId -> host path` 解析
+- V1 固定镜像 / 固定命令 / effectiveRetentionPolicy 决策
+- 收到 `RUNTIME_CONTRACT_DRIFT` 后决定是否重建
+- 把 RM 返回结果写回 binding / task
 
-首版最稳的做法是：
+### 10.4 RuntimeManager 负责
 
-- Authentik 可以带一些辅助属性或 group
-- 但最终平台业务授权仍以 ClawLoops 为准
+- 宿主机目录初始化
+- 容器创建 / 启动 / 停止 / 删除
+- 固定挂载、固定网络、固定 alias 接入
+- 启动探测与当前事实状态返回
+- 关键 contract drift 检测
+
+### 10.5 不要混淆的点
+
+不要让：
+
+- Authentik 成为 `workspace / role` 的唯一真相库
+- RuntimeManager 成为外层任务系统
+- RM 自动解析 secret 文件并注入 env
+- RM 自动 stop+delete+recreate 以“修复” drift
 
 ---
 
@@ -459,7 +487,6 @@ http:
           - X-authentik-email
           - X-authentik-name
           - X-authentik-uid
-          - X-authentik-jwt
 ```
 
 然后平台主域名和所有 workspace 子域名都挂这个 middleware。
@@ -477,15 +504,13 @@ http:
 
 ### 11.5 安全硬规则
 
-- 所有 workspace 子域名必须统一经过 Traefik + Authentik Forward Auth；
-- `browserUrl` 属于受保护入口，不是匿名公开地址；
-- 前端只有在 `ready=true` 时才允许跳转。
+- 所有 workspace 子域名必须统一经过 Traefik + Authentik Forward Auth
+- `browserUrl` 属于受保护入口，不是匿名公开地址
+- 前端只有在 `ready=true` 时才允许跳转
 
 ---
 
 ## 12. 推荐的数据模型补充
-
-除了你已有的 `UserRuntimeBinding`，建议补两个对象：
 
 ### 12.1 Invitation
 
@@ -530,6 +555,34 @@ interface AuthContext {
 }
 ```
 
+### 12.4 RuntimeEnsureRunningRequest（V1）
+
+```ts
+interface RuntimeEnsureRunningRequest {
+  userId: string
+  runtimeId: string
+  volumeId: string
+  routeHost: string
+  retentionPolicy: 'preserve_workspace' | 'wipe_workspace'
+  compat: {
+    openclawConfigDir: string
+    openclawWorkspaceDir: string
+  }
+  configMount?: {
+    configFilePath?: string
+    secretFilePath?: string
+  }
+  env?: Record<string, string>
+  envOverrides?: Record<string, string>
+}
+```
+
+冻结说明：
+
+- V1 中没有 `imageRef`
+- `compat` 是必填
+- `networkName / gatewayPort` 不再出现在请求体中
+
 ---
 
 ## 13. 推荐 API 落点
@@ -573,6 +626,22 @@ POST /api/v1/users/me/runtime/delete
 
 不要继续依赖 `DELETE` body。
 
+### 13.5 RuntimeManager internal 接口说明
+
+```text
+POST /internal/runtime-manager/containers/ensure-running
+POST /internal/runtime-manager/containers/stop
+POST /internal/runtime-manager/containers/delete
+GET  /internal/runtime-manager/containers/{runtimeId}
+```
+
+冻结边界：
+
+- RM internal 接口全部同步
+- `GET` 查不到容器事实时返回 `200 + observedState=deleted`
+- 命中多个容器时返回 `409 RUNTIME_ACTION_CONFLICT`
+- 关键 drift 返回 `409 RUNTIME_CONTRACT_DRIFT`
+
 ---
 
 ## 14. 在 Cursor 里应该怎么拆任务
@@ -584,10 +653,12 @@ POST /api/v1/users/me/runtime/delete
 1. 更新架构文档
 2. 更新 MVP 契约
 3. 更新 API 规范
-4. 增加类型定义：
+4. 更新 RuntimeManager 文档
+5. 增加类型定义：
    - `Invitation`
    - `WorkspaceMembership`
    - `AuthContext`
+   - `RuntimeEnsureRunningRequest`
 
 ### 14.2 第二组：后端真相对象
 
@@ -625,11 +696,24 @@ POST /api/v1/users/me/runtime/delete
 1. 平台域名挂 forward auth
 2. workspace 子域名挂 forward auth
 3. `/outpost.goauthentik.io/*` 路由放行到 outpost
-4. 验证 header / jwt 是否透传到应用
+4. 验证 header 是否透传到应用
 
-### 14.6 第六组：联调验收
+### 14.6 第六组：runtime 收敛
 
-验收 8 条：
+做：
+
+1. Orchestrator 改为对外异步 task
+2. RM `ensure-running` 请求体删除 `imageRef`
+3. 把 `compat` 提升为必填
+4. 固定 `clawloops_shared`
+5. 固定 `internalEndpoint = http://rt-<runtimeId>:18789`
+6. 实现 `RUNTIME_CONTRACT_DRIFT`
+7. 实现 `stop(nonexistent)=stopped / delete(nonexistent)=deleted`
+8. 实现 `GET not found => observedState=deleted`
+
+### 14.7 第七组：联调验收
+
+验收 10 条：
 
 1. 首次管理员能初始化成功
 2. 登录页只有本地密码
@@ -639,6 +723,8 @@ POST /api/v1/users/me/runtime/delete
 6. `start` 与 `post-login` 可安全重复调用
 7. workspace 子域名会被 Authentik 保护
 8. 前端只在 `ready=true` 时跳转 `browserUrl`
+9. RM internal API 不再接收 `imageRef`
+10. runtime 统一跑在 `clawloops_shared + 18789 + rt-<runtimeId>`
 
 ---
 
@@ -647,16 +733,19 @@ POST /api/v1/users/me/runtime/delete
 下面这段可以直接复制到 Cursor 作为任务说明。
 
 ```md
-目标：在不修改上游源码的前提下，把 ClawLoops 接入官方 Authentik，并冻结首版 invitation 生命周期与访问规则。
+目标：在不修改上游源码的前提下，把 ClawLoops 接入官方 Authentik，并把 runtime V1 contract 一起冻结到可开发状态。
 
 边界：
 - 使用官方 Authentik
-- Docker 分容器，同网络
+- Docker 分容器部署
+- 平台运行链路统一使用 clawloops_shared
 - 首个初始化管理员按默认 akadmin
 - 首版只开本地账号密码
 - 邀请制接入
 - 平台保持 workspace/role 业务真相
 - 所有 workspace 子域名必须经过 Traefik + Authentik Forward Auth
+- Orchestrator 对外异步返回 taskId
+- RuntimeManager internal API 同步执行
 
 需要完成：
 1. 新增 Invitation 数据模型与迁移
@@ -667,12 +756,14 @@ POST /api/v1/users/me/runtime/delete
 6. 新增 POST /api/v1/auth/post-login（幂等）
 7. 新增 /api/v1/admin/invitations 系列接口
 8. 新增 /internal/invitations 与 /internal/invitations/{id}/consume
-9. 保持现有 runtime 接口主体不变，但删除改为 POST /runtime/delete
+9. 保持现有 runtime 对外接口主体不变，但删除改为 POST /runtime/delete
 10. 把 subjectId/authProvider/authMethod 接入用户同步
 11. 在 Traefik 上为平台域名和 workspace 子域名挂 Authentik forward auth
-12. 接口返回和状态机必须与文档保持一致
-13. 平台禁止保存密码、禁止实现独立改密 API
-14. workspace-entry 是唯一跳转入口，前端只在 ready=true 时跳转
+12. RuntimeManager V1 请求体删除 imageRef，compat 必填
+13. 固定 runtime 网络为 clawloops_shared，固定 internalEndpoint 为 http://rt-<runtimeId>:18789
+14. 增加 RUNTIME_CONTRACT_DRIFT / RUNTIME_START_FAILED / RUNTIME_STOP_FAILED / RUNTIME_DELETE_FAILED
+15. 平台禁止保存密码、禁止实现独立改密 API
+16. workspace-entry 是唯一跳转入口，前端只在 ready=true 时跳转
 
 推荐链路：
 - 平台 token 负责业务入口
@@ -680,34 +771,21 @@ POST /api/v1/users/me/runtime/delete
 - start 阶段延迟创建或换取 enrollment URL
 - 登录完成后由 post-login 收口并绑定 workspace/role
 - 邮箱强校验在 post-login 阶段执行
+- Orchestrator 决策，RuntimeManager 执行
 ```
 
 ---
 
 ## 16. 最小可用实现顺序
 
-如果你只想最快跑通首版，按这个顺序就行：
-
-### 第 1 步
-先把 Authentik 跑起来，并完成管理员初始化。
-
-### 第 2 步
-把 Traefik + Outpost 前置鉴权接到平台主域名。
-
-### 第 3 步
-实现 `/auth/me` 与 `/internal/users/sync`。
-
-### 第 4 步
-实现 invitation 表和管理员创建 invitation。
-
-### 第 5 步
-做 invitation preview + start + post-login consume。
-
-### 第 6 步
-把 workspace 子域名也挂上 forward auth。
-
-### 第 7 步
-联调 runtime / workspace-entry。
+1. 先把 Authentik 跑起来，并完成管理员初始化
+2. 把 Traefik + Outpost 前置鉴权接到平台主域名
+3. 实现 `/auth/me` 与 `/internal/users/sync`
+4. 实现 invitation 表和管理员创建 invitation
+5. 做 invitation preview + start + post-login consume
+6. 把 workspace 子域名也挂上 forward auth
+7. 把 runtime V1 contract 收敛到固定镜像 / 固定网络 / 固定端口 / `compat` 必填
+8. 联调 `workspace-entry`
 
 ---
 
@@ -715,7 +793,7 @@ POST /api/v1/users/me/runtime/delete
 
 ### 误区 1：把 Authentik 当成 workspace 权限中心
 
-不对。它是身份系统，不是你平台业务授权的唯一真相。
+不对。它是身份系统，不是平台业务授权的唯一真相。
 
 ### 误区 2：对外直接发 Authentik invitation 链接
 
@@ -729,9 +807,13 @@ POST /api/v1/users/me/runtime/delete
 
 不推荐。会让联调复杂度暴涨。
 
-### 误区 5：拿到 browserUrl 就直接跳
+### 误区 5：拿到 `browserUrl` 就直接跳
 
 不对。前端只能在 `workspace-entry.ready=true` 时跳转，且 URL 始终受前置鉴权保护。
+
+### 误区 6：让 RuntimeManager 自己“顺手修好” drift
+
+不对。RM 只能检测并返回 `RUNTIME_CONTRACT_DRIFT`，真正是否 stop+delete+recreate 由 Orchestrator 决策。
 
 ---
 
@@ -753,11 +835,13 @@ POST /api/v1/users/me/runtime/delete
 6. **在 enrollment flow 里直接设置用户密码**
 7. **采用延迟创建 Authentik invitation 的模式**
 8. **把 `workspace-entry` 定义成唯一跳转入口**
+9. **把 runtime V1 明确定成 `clawloops_shared + 18789 + rt-<runtimeId> + compat 必填`**
+10. **让 Orchestrator 负责异步任务，让 RuntimeManager 只做同步执行器**
 
 这套方案最符合当前需求、实施成本最低、后续扩展阻力最小。
 
 ---
 
-v0.7-authentik-frozen  
+v0.8-authentik-runtime-frozen  
 reno  
 2026-03-23
