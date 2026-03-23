@@ -1,6 +1,6 @@
-# CrewClaw × 官方 Authentik 实施文档
+# CrewClaw × 官方 Authentik 实施文档（冻结修订）
 
-这份文档是给你直接在 **Cursor** 里开干用的，不再停留在“讨论方案”，而是明确到：
+这份文档是给你直接在 Cursor 里开干用的，不再停留在“讨论方案”，而是明确到：
 
 - 你现在的文档应该怎么改；
 - 官方 Authentik 能做到什么；
@@ -16,12 +16,16 @@
 
 **要改，而且建议一次性改到位。**
 
-必须改动的点有 4 个：
+本次必须冻结的点不止 4 个，而是至少包括：
 
 1. 把 Authentik 从“只是登录入口”升级为“正式身份系统”。
 2. 把 invitation 从一句需求，升级成完整的业务对象与时序。
 3. 把“首版只开本地账号密码”写成硬规则。
-4. 把“密码修改机制交给 Authentik”写进架构、契约、接口三份文档。
+4. 把“密码管理全部交给 Authentik”写进架构、契约、接口三份文档。
+5. 把管理员初始账号口径统一冻结为官方默认 `akadmin`。
+6. 把 invitation 生命周期统一冻结为“双层模型 + 延迟创建”。
+7. 把 `post-login`、`start` 的幂等性和事务边界写清楚。
+8. 把 workspace 子域名保护、`ready=true` 跳转规则、字段命名冻结写成强规则。
 
 ### 1.2 官方 Authentik 能否满足你的需求？
 
@@ -54,7 +58,8 @@
 - CrewClaw 负责 workspace / role / invitation / runtime 业务真相。
 - Traefik + Outpost 负责前置鉴权。
 - 首版只启用本地账号密码。
-- 邀请链接走“一次性 token + enrollment flow”模式。
+- 邀请链接走“平台 token + enrollment flow”模式。
+- 身份侧 invitation 在 `start` 阶段延迟创建，不在管理员创建 invitation 时预生成。
 
 ---
 
@@ -79,13 +84,11 @@
 推荐把它理解成：
 
 1. 用户第一次不需要预先知道密码；
-2. 用户通过**一次性 invitation 链接**进入；
+2. 用户通过 **一次性 invitation 链接** 进入；
 3. 这个 invitation 链接本身就是“首次免密码入口”；
 4. 在 Authentik 的 enrollment flow 里，用户填写资料并设置密码；
 5. 完成后由 Authentik 自动登录；
 6. CrewClaw 根据 invitation 完成 workspace / role 绑定。
-
-这样你既满足了“首登免密码”，又没有引入额外魔法状态机。
 
 ---
 
@@ -95,11 +98,12 @@
 首版直接用官方 Authentik
 不改源码
 Docker 分容器、同网络
+首个初始化管理员按默认 akadmin
 只开本地账号密码
 后续再加微信/飞书/钉钉/Google/GitHub/企业 SSO
 ```
 
-把这 5 条当成首版硬边界，不要在开发中途漂移。
+把这 6 条当成首版硬边界，不要在开发中途漂移。
 
 ---
 
@@ -138,7 +142,7 @@ networks:
 - Traefik 能访问 CrewClaw 与 Outpost
 - Outpost 能访问 Authentik Core
 - CrewClaw 能访问 Authentik 管理接口（若你用 API/脚本初始化）
-- runtime manager 能访问内部服务
+- Runtime Manager 能访问内部服务
 
 同网络最省事，也最符合你当前单机部署模型。
 
@@ -153,7 +157,7 @@ networks:
 - 用官方 Authentik
 - 不改源码
 
-那么**首个初始化管理员账号默认是 `akadmin`**，而不是 `admin`。
+那么 **首个初始化管理员账号默认是 `akadmin`**，而不是 `admin`。
 
 ### 5.2 这对你意味着什么
 
@@ -179,8 +183,6 @@ networks:
 ### 5.3 首版正式建议
 
 **建议你接受“管理员角色首登”这个定义，而不是执着用户名必须写死 `admin`。**
-
-这是不改源码前提下最稳的路径。
 
 ---
 
@@ -260,6 +262,8 @@ created_at
 updated_at
 ```
 
+> `status` 首版只存 `pending / consumed / revoked`；`expired` 由 `expires_at` 派生，不单独落库。
+
 ### 8.2 为什么不能只靠 Authentik invitation
 
 因为你真正要绑定的是：
@@ -283,13 +287,7 @@ updated_at
 https://crewclaw.example.com/invite/{platform_token}
 ```
 
-不要直接把 Authentik 的原始 `itoken` 链接当成你对外的业务链接。
-
-原因：
-
-- 你要先做业务校验；
-- 你要先知道这个 invitation 绑定哪个 workspace / role；
-- 你还要留出未来“撤销 / 审批 / 重发 / 追踪”的空间。
+不要直接把 Authentik 的原始 `itoken` 链接当成对外业务链接。
 
 ### 8.4 推荐流程
 
@@ -305,8 +303,7 @@ https://crewclaw.example.com/invite/{platform_token}
 系统动作：
 
 - 创建 platform invitation
-- 生成一次性 token
-- 准备 Authentik invitation（或延迟生成）
+- 生成一次性 platform token
 - 返回对外 inviteUrl
 
 #### 第二步：用户打开 invitation 页
@@ -323,9 +320,10 @@ https://crewclaw.example.com/invite/{platform_token}
 后端动作：
 
 1. 校验 platform token
-2. 写入 pending invitation cookie / session
-3. 生成 Authentik enrollment URL
-4. 返回 `redirectUrl`
+2. 校验 invitation 业务状态
+3. 写入 pending invitation cookie / session
+4. 延迟创建或换取 Authentik enrollment URL
+5. 返回 `redirectUrl`
 
 #### 第四步：跳转到 Authentik enrollment flow
 
@@ -338,17 +336,33 @@ Enrollment Flow 建议顺序：
 
 #### 第五步：登录成功回到 CrewClaw
 
-回到 `/api/v1/auth/post-login` 或等价的 BFF 路由。
+回到 `POST /api/v1/auth/post-login` 或等价的 BFF 路由。
 
 系统动作：
 
 1. 用 Authentik 会话识别当前用户
 2. 调 `/internal/users/sync`
-3. 检查 pending invitation
-4. 绑定 workspace / role
-5. 标记 invitation consumed
-6. 清理 cookie / session
-7. 跳工作台
+3. 执行邮箱强校验
+4. 检查 pending invitation
+5. 绑定 workspace / role
+6. 标记 invitation consumed
+7. 清理 cookie / session
+8. 跳工作台
+
+### 8.5 start 与 post-login 的关键规则
+
+- `start` 必须幂等；
+- 同一浏览器会话只保留一个有效 pending invitation session；
+- pending session TTL 建议 10–30 分钟；
+- `post-login` 必须幂等；
+- 同一 `invitationId + userId` 只能成功消费一次；
+- `consume invitation` 与 `workspace membership binding` 必须原子，或定义清晰补偿逻辑。
+
+### 8.6 邮箱校验固定位置
+
+- 邮箱强校验统一放在 `post-login` 阶段执行；
+- 即已经拿到 `subjectId` 与 `email` 之后再比对 `targetEmail`；
+- 不要把邮箱校验漂移到 preview、start 或前端页面逻辑里。
 
 ---
 
@@ -372,13 +386,12 @@ Enrollment Flow 建议顺序：
 - 不需要你平台自己写“首次改密强跳页”
 - 不需要多一次跳转
 
-### 9.3 如果你以后坚持“下一次登录强制改密”
+### 9.3 平台明确禁止的事
 
-那就用 Authentik 官方的“Force password reset on next login”方案，不要在平台重写。
-
-你平台只做一件事：
-
-- 在需要时给用户打上 `reset_password=true` 或等价策略标记
+- 保存密码
+- 生成正式临时密码
+- 提供密码落库接口
+- 实现独立改密 API
 
 ---
 
@@ -449,7 +462,7 @@ http:
           - X-authentik-jwt
 ```
 
-然后平台主域名和 workspace 子域名都挂这个 middleware。
+然后平台主域名和所有 workspace 子域名都挂这个 middleware。
 
 ### 11.4 你的应用层要做什么
 
@@ -461,6 +474,12 @@ http:
 - `name`
 
 再触发用户同步与业务校验。
+
+### 11.5 安全硬规则
+
+- 所有 workspace 子域名必须统一经过 Traefik + Authentik Forward Auth；
+- `browserUrl` 属于受保护入口，不是匿名公开地址；
+- 前端只有在 `ready=true` 时才允许跳转。
 
 ---
 
@@ -477,7 +496,7 @@ interface Invitation {
   targetEmail: string
   workspaceId: string
   role: string
-  status: 'pending' | 'consumed' | 'revoked' | 'expired'
+  status: 'pending' | 'consumed' | 'revoked'
   expiresAt: string
   consumedAt?: string | null
   consumedByUserId?: string | null
@@ -498,6 +517,19 @@ interface WorkspaceMembership {
 }
 ```
 
+### 12.3 AuthContext
+
+```ts
+interface AuthContext {
+  subjectId: string
+  email: string
+  username?: string | null
+  name?: string | null
+  provider: 'authentik'
+  method: 'local_password'
+}
+```
+
 ---
 
 ## 13. 推荐 API 落点
@@ -508,7 +540,7 @@ interface WorkspaceMembership {
 GET  /api/v1/auth/options
 GET  /api/v1/public/invitations/{token}
 POST /api/v1/public/invitations/{token}/start
-GET  /api/v1/auth/post-login
+POST /api/v1/auth/post-login
 ```
 
 ### 13.2 管理员接口
@@ -531,11 +563,19 @@ POST /internal/invitations/{id}/revoke
 POST /internal/users/{userId}/runtime-binding/ensure
 ```
 
+### 13.4 runtime 删除接口建议
+
+首版建议改为：
+
+```text
+POST /api/v1/users/me/runtime/delete
+```
+
+不要继续依赖 `DELETE` body。
+
 ---
 
 ## 14. 在 Cursor 里应该怎么拆任务
-
-这是最关键的一段。
 
 ### 14.1 第一组：文档与类型先行
 
@@ -544,7 +584,7 @@ POST /internal/users/{userId}/runtime-binding/ensure
 1. 更新架构文档
 2. 更新 MVP 契约
 3. 更新 API 规范
-4. 增加 TypeScript / Go / Python 类型定义：
+4. 增加类型定义：
    - `Invitation`
    - `WorkspaceMembership`
    - `AuthContext`
@@ -563,7 +603,7 @@ POST /internal/users/{userId}/runtime-binding/ensure
 
 1. `/api/v1/auth/options`
 2. `/api/v1/auth/me`
-3. `/api/v1/auth/post-login`
+3. `POST /api/v1/auth/post-login`
 4. `internal/users/sync`
 
 ### 14.4 第四组：invitation 主链路
@@ -573,8 +613,10 @@ POST /internal/users/{userId}/runtime-binding/ensure
 1. 管理员创建 invitation
 2. invitation 预览页接口
 3. invitation start 接口
-4. pending invitation cookie/session
+4. pending invitation cookie / session
 5. post-login consume 逻辑
+6. 邮箱强校验
+7. Authentik → CrewClaw 错误映射
 
 ### 14.5 第五组：Traefik / Outpost 接入
 
@@ -587,49 +629,57 @@ POST /internal/users/{userId}/runtime-binding/ensure
 
 ### 14.6 第六组：联调验收
 
-验收 6 条：
+验收 8 条：
 
 1. 首次管理员能初始化成功
 2. 登录页只有本地密码
 3. invitation 可创建
 4. invitation 链接一次性有效
 5. 用户完成接入后能绑定 workspace / role
-6. 进入 workspace 子域名会被 Authentik 保护
+6. `start` 与 `post-login` 可安全重复调用
+7. workspace 子域名会被 Authentik 保护
+8. 前端只在 `ready=true` 时跳转 `browserUrl`
 
 ---
 
 ## 15. 你可以直接交给 Cursor 的开发任务清单
 
-下面这段你可以直接复制到 Cursor 作为任务说明。
+下面这段可以直接复制到 Cursor 作为任务说明。
 
 ```md
-目标：在不修改上游源码的前提下，把 CrewClaw 接入官方 Authentik。
+目标：在不修改上游源码的前提下，把 CrewClaw 接入官方 Authentik，并冻结首版 invitation 生命周期与访问规则。
 
 边界：
 - 使用官方 Authentik
 - Docker 分容器，同网络
+- 首个初始化管理员按默认 akadmin
 - 首版只开本地账号密码
 - 邀请制接入
 - 平台保持 workspace/role 业务真相
+- 所有 workspace 子域名必须经过 Traefik + Authentik Forward Auth
 
 需要完成：
 1. 新增 Invitation 数据模型与迁移
 2. 新增 WorkspaceMembership 绑定逻辑
 3. 新增 /api/v1/auth/options
 4. 新增 /api/v1/public/invitations/{token}
-5. 新增 /api/v1/public/invitations/{token}/start
-6. 新增 /api/v1/auth/post-login
+5. 新增 /api/v1/public/invitations/{token}/start（幂等）
+6. 新增 POST /api/v1/auth/post-login（幂等）
 7. 新增 /api/v1/admin/invitations 系列接口
 8. 新增 /internal/invitations 与 /internal/invitations/{id}/consume
-9. 保持现有 runtime 接口不变
+9. 保持现有 runtime 接口主体不变，但删除改为 POST /runtime/delete
 10. 把 subjectId/authProvider/authMethod 接入用户同步
 11. 在 Traefik 上为平台域名和 workspace 子域名挂 Authentik forward auth
 12. 接口返回和状态机必须与文档保持一致
+13. 平台禁止保存密码、禁止实现独立改密 API
+14. workspace-entry 是唯一跳转入口，前端只在 ready=true 时跳转
 
 推荐链路：
-- 平台 invitation token 负责业务入口
+- 平台 token 负责业务入口
 - Authentik invitation/enrollment flow 负责身份接入
-- 登录完成后由 post-login 入口收口并绑定 workspace/role
+- start 阶段延迟创建或换取 enrollment URL
+- 登录完成后由 post-login 收口并绑定 workspace/role
+- 邮箱强校验在 post-login 阶段执行
 ```
 
 ---
@@ -679,11 +729,15 @@ POST /internal/users/{userId}/runtime-binding/ensure
 
 不推荐。会让联调复杂度暴涨。
 
+### 误区 5：拿到 browserUrl 就直接跳
+
+不对。前端只能在 `workspace-entry.ready=true` 时跳转，且 URL 始终受前置鉴权保护。
+
 ---
 
 ## 18. 最后的正式建议
 
-如果你的目标是：
+如果目标是：
 
 - 尽快可落地
 - 不改上游源码
@@ -697,11 +751,13 @@ POST /internal/users/{userId}/runtime-binding/ensure
 4. **首版只做本地密码**
 5. **把 invitation 链接定义成一次性免密码接入入口**
 6. **在 enrollment flow 里直接设置用户密码**
+7. **采用延迟创建 Authentik invitation 的模式**
+8. **把 `workspace-entry` 定义成唯一跳转入口**
 
-这套方案是最符合你当前需求、实施成本最低、后续扩展阻力最小的组合。
+这套方案最符合当前需求、实施成本最低、后续扩展阻力最小。
 
+---
 
-
-v 0.5
-reno 
-2026-03-23 10:04
+v0.7-authentik-frozen  
+reno  
+2026-03-23

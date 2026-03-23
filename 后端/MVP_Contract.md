@@ -1,13 +1,13 @@
-# CrewClaw 平台 MVP 开发基线总契约（Authentik 接入版）
+# CrewClaw 平台 MVP 开发基线总契约（Authentik 接入版，冻结修订）
 
 统一 1 到 6 模块在“官方 Authentik 首版接入”条件下的职责边界、字段约定、状态枚举、错误码和联调流程。
 
 | 文档定位 | 模块协作总契约 |
 | --- | --- |
 | 适用阶段 | MVP 首版上线 |
-| 本版重点 | 增加 Authentik 首次管理员初始化、本地密码登录、邀请制接入、首登完成绑定、密码归属策略与 Traefik + Outpost 前置鉴权规则 |
-| 本版原则 | 不改上游源码、先跑通首版、边界清晰、便于 Cursor 直接落地 |
-| 当前版本 | v0.6-authentik |
+| 本版重点 | 增加管理员初始化冻结口径、邀请制接入生命周期、首登密码流程、post-login 幂等、runtime 跳转规则与 internal API 安全模型 |
+| 本版原则 | 不改上游源码、先跑通首版、边界清晰、字段冻结、便于直接落地 |
+| 当前版本 | v0.7-authentik-frozen |
 
 ---
 
@@ -17,9 +17,10 @@
 | --- | --- |
 | 身份系统 | 官方 Authentik |
 | 首版登录方式 | 仅本地用户名/邮箱 + 密码 |
+| 管理员初始化 | 首个官方 bootstrap 管理员统一按默认 `akadmin` 处理 |
 | 平台模式 | 管理员提供服务，普通用户只使用自己的 workspace |
-| 邀请方式 | 平台 invitation + Authentik enrollment flow |
-| 用户首次接入 | 通过一次性 invitation 链接进入完成接入页 |
+| 邀请方式 | 平台 invitation + Authentik enrollment flow，首版延迟创建身份侧 invitation |
+| 用户首次接入 | 通过一次性 invitation 链接进入 enrollment flow 并直接设置密码 |
 | 工作区鉴权 | Traefik + Authentik Proxy Outpost + Forward Auth |
 | 密码归属 | 统一交给 Authentik 管理 |
 | 首版非目标 | 第三方登录、企业目录同步、复杂审批流、复杂共享空间权限、复杂费用管理 |
@@ -49,6 +50,7 @@
 | browserUrl | 浏览器可访问地址 |
 | internalEndpoint | 平台内部访问地址 |
 | retentionPolicy | `preserve_workspace / wipe_workspace` |
+| ready | 最终可访问状态，不等同于 `observedState` |
 
 ### 2.3 invitation 相关
 
@@ -56,18 +58,34 @@
 | --- | --- |
 | invitationId | 平台邀请唯一标识 |
 | inviteTokenHash | 平台一次性 token 哈希 |
-| invitation.status | `pending / consumed / revoked / expired` |
+| invitation.status | `pending / consumed / revoked` |
 | targetEmail | 被邀请邮箱 |
 | workspaceId | 目标工作区 |
 | invitation.role | 被邀请后获得的业务角色 |
-| authentikInvitationRef | Authentik 侧 invitation 引用 |
+| authentikInvitationRef | Authentik 侧 invitation 引用，首版允许为空 |
 | consumedByUserId | 最终消费该 invitation 的用户 |
+| expiresAt | 过期时间；`expired` 由其派生，不入库 |
 
 ### 2.4 任务状态
 
 | 字段 | 说明 |
 | --- | --- |
 | task.status | `pending / running / succeeded / failed / canceled` |
+
+### 2.5 字段冻结清单
+
+以下字段名称不得漂移：
+
+- `subjectId`
+- `invitationId`
+- `inviteTokenHash`
+- `workspaceId`
+- `role`
+- `desiredState`
+- `observedState`
+- `browserUrl`
+- `internalEndpoint`
+- `invitation.status`
 
 ---
 
@@ -94,7 +112,15 @@
 1. 当前请求已通过 Authentik 前置鉴权；
 2. 当前 CrewClaw 用户状态为 `active`；
 3. 当前用户已具备合法 workspace 绑定；
-4. 当前 runtime 属于该用户。
+4. 当前 runtime 属于该用户；
+5. 当前入口接口返回 `ready=true`。
+
+**语义冻结**：
+
+- `task.status` = 操作生命周期；
+- `observedState` = 资源状态；
+- `ready` = 最终可访问状态；
+- 前端跳转只看 `ready`。
 
 ---
 
@@ -109,7 +135,7 @@
 | targetEmail | 是 | 受邀邮箱 |
 | workspaceId | 是 | 邀请目标工作区 |
 | role | 是 | 邀请后绑定角色 |
-| status | 是 | `pending / consumed / revoked / expired` |
+| status | 是 | `pending / consumed / revoked` |
 | expiresAt | 是 | 过期时间 |
 | consumedAt | 否 | 消费时间 |
 | consumedByUserId | 否 | 消费用户 |
@@ -121,6 +147,7 @@
 - Invitation 是 CrewClaw 的业务对象；
 - Authentik invitation 只是身份层执行引用；
 - `workspaceId / role / status` 以 CrewClaw 为真相；
+- `expired` 仅通过 `expiresAt < now>` 派生；
 - `用户创建 / 密码设置 / 会话建立` 以 Authentik 为真相。
 
 ---
@@ -129,12 +156,12 @@
 
 | 模块 | 职责 |
 | --- | --- |
-| 模块 1：身份与访问接入 | 对接 Authentik 会话、读取前置鉴权上下文、首次登录触发 `/internal/users/sync`、处理 invitation 完成后的 post-login 收口 |
-| 模块 2：租户与用户资源控制 | 维护 User / Invitation / WorkspaceMembership / UserRuntimeBinding 真相；负责首次 binding 初始化 |
+| 模块 1：身份与访问接入 | 对接 Authentik 会话、读取前置鉴权上下文、首次登录触发 `/internal/users/sync`、处理 invitation 完成后的 post-login 收口、执行邮箱强校验 |
+| 模块 2：租户与用户资源控制 | 维护 User / Invitation / WorkspaceMembership / UserRuntimeBinding 真相；负责首次 binding 初始化；保证 invitation 消费与 membership 绑定的原子性或补偿逻辑 |
 | 模块 3：Runtime 编排 | 只在用户已通过认证且业务绑定合法的前提下处理 runtime 启停删 |
 | 模块 4：模型接入、平台凭据代理与用量归集 | 与 Authentik 解耦，不处理密码与 invitation，只处理模型治理 |
 | 模块 5：管理后台 | 负责 invitation 创建、查看、撤销、用户治理、runtime 查看 |
-| 模块 6：用户工作台 | 负责用户首次接入完成后的工作台承接、runtime 状态与 workspace 进入 |
+| 模块 6：用户工作台 | 负责用户首次接入完成后的工作台承接、runtime 状态展示与 `workspace-entry` 跳转 |
 
 ---
 
@@ -158,29 +185,55 @@
 - Google / GitHub / 企业 SSO / 微信 / 钉钉 / 飞书；
 - 混合登录入口同时上线。
 
-### 6.3 统一 invitation 语义
+### 6.3 统一管理员初始化口径
+
+- 首个官方初始化管理员固定按默认 `akadmin` 处理；
+- 业务上视为管理员角色账号；
+- 如需额外日常管理员，可在初始化后创建；
+- 文档、接口、测试口径不得再混用 `admin` 与 `akadmin` 作为首个初始化账号。
+
+### 6.4 统一 invitation 语义
 
 - 管理员创建 invitation 必须绑定目标 `workspaceId` 与 `role`。
-- invitation 必须有一次性 token。
+- invitation 必须有一次性平台 token。
 - invitation 消费后必须不可再次使用。
 - 平台 invitation 一旦撤销，对应入口必须立即失效。
+- 平台 token 是业务入口真相；Authentik `itoken` 只是身份执行入口。
 
-### 6.4 invitation 真相边界
+### 6.5 invitation 生命周期冻结
 
-- Authentik 负责 enrollment flow 执行。
-- CrewClaw 负责 invitation 是否还能使用，以及最终绑定到哪个 workspace / role。
+- 创建 invitation 时只生成 CrewClaw 业务 token；
+- 用户调用 `start` 时再延迟创建或换取 Authentik enrollment URL；
+- 平台状态是最终业务真相；
+- `revoked / expired / consumed` 必须由平台优先校验；
+- 即使身份侧 token 尚有效，也必须以平台状态阻断 `start` 或 `post-login`。
 
-### 6.5 post-login 收口规则
+### 6.6 post-login 收口规则
 
 用户通过 Authentik 完成 enrollment 或登录后，模块 1 必须执行：
 
 1. `/internal/users/sync`
 2. 检查是否存在待消费 invitation 上下文
-3. 若存在，则调用模块 2 完成 workspace / role 绑定
-4. 把 invitation 标记为 `consumed`
-5. 清理待消费上下文
+3. 若存在，先执行邮箱强校验
+4. 调模块 2 完成 workspace / role 绑定
+5. 把 invitation 标记为 `consumed`
+6. 清理待消费上下文
 
-### 6.6 runtime 启动前置条件
+**幂等要求**：
+
+- `post-login` 必须幂等；
+- 同一 `invitationId + userId` 只能成功消费一次；
+- 刷新页面、浏览器重试、网络抖动不得产生重复 membership 或重复 side effect；
+- `consume invitation` 与 `workspace membership binding` 必须原子，或有清晰补偿逻辑。
+
+### 6.7 invitation start 规则
+
+- `start` 是幂等操作；
+- 可重复调用，但只产生一个有效 pending invitation 会话；
+- pending invitation session 需绑定当前浏览器会话并具备 TTL（建议 10–30 分钟）；
+- `start` 不直接消费 invitation。
+
+### 6.8 runtime 启动前置条件
 
 在模块 3 接收 `ensure_running` 前，必须满足：
 
@@ -189,17 +242,26 @@
 - 用户具备合法 workspace 绑定；
 - 若当前页面来自 invitation 完成流程，则 invitation 已成功收口。
 
-### 6.7 browserUrl 安全模型
+### 6.9 browserUrl 安全模型
 
 - `browserUrl` 只表示浏览器入口。
 - 所有 workspace 子域名必须经 Traefik + Authentik Forward Auth。
 - 知道 URL 不等于可访问。
+- 只有 `ready=true` 时前端才能跳转。
+- `workspace-entry` 是唯一跳转入口；`runtime/status` 只用于展示状态。
 
-### 6.8 disabled 收口规则
+### 6.10 disabled 收口规则
 
 - 除 `/api/v1/auth/me` 外，disabled 用户访问业务接口统一返回 `403 USER_DISABLED`。
+- `/api/v1/auth/access` 永远返回 `200`，仅用于状态判断。
 - disabled 用户不可继续消费 invitation。
 - disabled 用户若已有运行中 runtime，系统应尽快收敛到 `stopped`。
+
+### 6.11 internal API 安全规则
+
+- `/internal/*` 接口只允许服务间访问；
+- 必须使用 mTLS、internal token 或同等级服务鉴权；
+- 禁止公网暴露。
 
 ---
 
@@ -211,18 +273,18 @@
 - 平台不自建“初始化管理员密码设置页”。
 - 平台只承接完成后的登录态与身份同步。
 
-### 7.2 “admin”命名约束
+### 7.2 正式口径
 
-- 文档层面把首登账户视为“管理员账户”。
-- 若业务层坚持用户名必须为 `admin`，应通过初始化后的二次创建策略解决。
-- 不通过修改上游源码改变官方默认初始化行为。
+- 首个官方 bootstrap 管理员为 `akadmin`。
+- 业务上视为管理员角色账户。
+- 不再把“管理员账号必须字面叫 `admin`”作为首版要求。
 
 ### 7.3 日常管理员策略
 
 推荐：
 
 - 首次初始化管理员用于 bootstrap；
-- 日常平台管理由本地管理员账号承担；
+- 日常平台管理由额外创建的本地管理员账号承担；
 - bootstrap 账号只保留 break-glass 应急用途。
 
 ---
@@ -242,7 +304,8 @@
 
 - 平台一次性 token
 - 对应 `Invitation` 记录
-- 可选的 Authentik invitation 引用
+
+系统在首版 **不要求** 同步预创建 Authentik invitation。
 
 ### 8.2 邀请预览
 
@@ -259,14 +322,17 @@
 用户点击“继续接入”后：
 
 - 平台先验证 platform token；
+- 再验证平台 invitation 状态；
 - 再写入短期 pending invitation 会话；
-- 再跳转到 Authentik enrollment flow。
+- 再创建或换取 Authentik enrollment flow URL；
+- `start` 必须幂等。
 
 ### 8.4 邀请完成
 
 Authentik 完成 enrollment / login 后：
 
 - CrewClaw 必须以当前 `subjectId` 关联用户；
+- `post-login` 阶段执行邮箱强校验；
 - 完成目标 workspace / role 绑定；
 - 标记 invitation `consumed`；
 - 后续同一 token 不再可用。
@@ -279,7 +345,7 @@ Authentik 完成 enrollment / login 后：
 - token 已过期；
 - token 已撤销；
 - token 已消费；
-- 当前登录用户与 invitation 预期邮箱不一致且策略不允许覆盖；
+- 当前登录用户与 invitation 目标邮箱不一致；
 - invitation 指向的 workspace 不存在或已关闭。
 
 ---
@@ -290,7 +356,7 @@ Authentik 完成 enrollment / login 后：
 
 本版冻结采用：
 
-- invitation completion flow 内直接设置密码；
+- invitation enrollment flow 内直接设置密码；
 - 完成后自动登录；
 - 后续密码修改走 Authentik 自身 flow。
 
@@ -298,6 +364,7 @@ Authentik 完成 enrollment / login 后：
 
 - 禁止在 CrewClaw 数据库保存用户密码；
 - 禁止平台自己生成“临时密码”并作为正式密码存储；
+- 禁止平台自己提供密码落库接口；
 - 禁止绕开 Authentik 自行实现第二套密码修改 API。
 
 ### 9.3 可选扩展
@@ -320,8 +387,7 @@ Authentik 完成 enrollment / login 后：
 
 1. 模块 5 提交 invitation 创建请求。
 2. 模块 2 落库 `Invitation`。
-3. 模块 1 / 集成层准备 Authentik enrollment invitation。
-4. 返回 invite URL。
+3. 返回 invite URL。
 
 ### 10.3 用户完成接入
 
@@ -331,8 +397,9 @@ Authentik 完成 enrollment / login 后：
 4. 用户在 Authentik 中完成资料和密码设置。
 5. Authentik 登录成功后回到 CrewClaw。
 6. 模块 1 调 `/internal/users/sync`。
-7. 模块 2 根据 pending invitation 完成绑定。
-8. 模块 6 跳转工作台。
+7. 模块 1 执行邮箱强校验。
+8. 模块 2 根据 pending invitation 幂等完成绑定。
+9. 模块 6 跳转工作台。
 
 ### 10.4 正常登录并进入工作区
 
@@ -340,7 +407,7 @@ Authentik 完成 enrollment / login 后：
 2. Traefik + Authentik 完成前置鉴权。
 3. 模块 1 获取 AuthContext。
 4. 模块 6 获取 `/workspace-entry`。
-5. `ready=true` 时跳转 `browserUrl`。
+5. `ready=true` 时才允许跳转 `browserUrl`。
 
 ---
 
@@ -353,9 +420,11 @@ Authentik 完成 enrollment / login 后：
 | 404 | INVITATION_NOT_FOUND | invitation 不存在 |
 | 409 | INVITATION_ALREADY_CONSUMED | invitation 已使用 |
 | 409 | INVITATION_REVOKED | invitation 已撤销 |
-| 410 | INVITATION_EXPIRED | invitation 已过期 |
+| 410 | INVITATION_EXPIRED | invitation 已过期（派生值） |
 | 422 | INVITATION_EMAIL_MISMATCH | 当前接入邮箱与邀请目标不匹配 |
 | 422 | INVITATION_WORKSPACE_INVALID | invitation 指向的 workspace 无效 |
+| 500/502 | INVITATION_ERROR | invitation / enrollment 执行失败 |
+| 500/502 | USER_SYNC_ERROR | 登录后用户同步失败 |
 
 ### 11.2 功能验收
 
@@ -364,11 +433,12 @@ Authentik 完成 enrollment / login 后：
 1. 管理员可完成首次初始化。
 2. 平台首版只显示本地密码登录。
 3. 管理员可创建绑定 workspace / role 的 invitation。
-4. invitation 为一次性 token。
-5. 用户可通过 invitation 完成接入。
+4. invitation 为一次性 platform token。
+5. 用户可通过 invitation 完成接入并在 flow 中直接设置密码。
 6. 用户首次接入后能进入平台。
 7. workspace 子域名受 Authentik 前置鉴权保护。
 8. 用户密码由 Authentik 管理。
+9. `post-login` 与 `start` 均支持幂等重试。
 
 ### 11.3 安全验收
 
@@ -376,7 +446,9 @@ Authentik 完成 enrollment / login 后：
 
 - 知道 `browserUrl` 不能绕过登录直接访问；
 - invitation token 不能重复消费；
+- 平台 `revoked / expired / consumed` 状态优先于身份侧 token；
 - disabled 用户不能继续访问业务接口；
+- internal API 不得公网暴露；
 - 平台数据库不保存 Authentik 密码明文或散列。
 
 ---
@@ -399,12 +471,330 @@ Authentik 完成 enrollment / login 后：
 
 - **Authentik 接管身份、密码、会话和 enrollment flow**；
 - **CrewClaw 接管用户业务状态、workspace / role 绑定、runtime 与资源治理**；
-- **Invitation 采用业务真相与身份执行解耦**；
-- **首版只开本地密码，后续再向外扩展**。
+- **Invitation 采用业务真相与身份执行解耦，首版统一为延迟创建模式**；
+- **首版只开本地密码，后续再向外扩展**；
+- **工作区跳转统一由 `workspace-entry` 收口，前端只在 `ready=true` 时跳转**。
 
 这套边界一旦冻结，前后端与平台服务就可以并行开发，而不需要在开发中途反复重谈认证模型。
 
 
-v 0.5
-reno 
-2026-03-23 10:04
+
+
+
+# 冻结附录
+
+> 本附录用于将实现层关键细节去歧义化，作为 MVP 开发冻结基线的一部分。
+>  若与正文存在冲突，以本附录为准。
+
+------
+
+## A1. 数据库约束（强制）
+
+### Users
+
+- `subject_id` → **UNIQUE NOT NULL**
+- `email` → **UNIQUE NOT NULL（lowercase 规范化）**
+
+------
+
+### Invitations
+
+- `invite_token_hash` → **UNIQUE NOT NULL**
+- `target_email` → **NOT NULL（lowercase）**
+- `status` → 不存储 `expired`，仅存：
+  - `pending | consumed | revoked`
+- `expires_at` → 必填
+
+#### 状态判定（只读规则）
+
+```
+expired = (status == pending && now > expires_at)
+```
+
+------
+
+### Workspace Memberships
+
+- **唯一约束**
+
+```
+UNIQUE (workspace_id, user_id)
+```
+
+- `status` 枚举（冻结）
+
+```
+active | disabled
+```
+
+------
+
+### Invitation 消费幂等约束（必须实现）
+
+必须保证以下逻辑具备幂等性：
+
+```
+(invitation_id, user_id) → 只能成功绑定一次
+```
+
+推荐实现（任选其一）：
+
+- 唯一索引（推荐）
+- 或事务内 SELECT + 状态校验
+
+------
+
+## A2. 枚举冻结（不可扩展）
+
+### Platform Role（users.role）
+
+```
+platform_admin
+platform_user
+```
+
+------
+
+### Workspace Role（workspace_memberships.role）
+
+```
+workspace_admin
+workspace_member
+```
+
+------
+
+### Membership Status
+
+```
+active
+disabled
+```
+
+------
+
+### Invitation Error Code（统一返回）
+
+```
+INVALID_TOKEN
+EXPIRED
+REVOKED
+EMAIL_MISMATCH
+ALREADY_CONSUMED
+```
+
+------
+
+## A3. `post-login` 流程最终定义（冻结）
+
+### 定义
+
+`POST /api/v1/auth/post-login` 是：
+
+> **前端在 Authentik 登录完成后主动调用的 BFF 接口（非 Authentik callback）**
+
+------
+
+### 流程时序（唯一标准）
+
+1. 用户完成 Authentik 登录
+2. 浏览器返回前端应用
+3. 前端调用：
+
+```
+POST /api/v1/auth/post-login
+```
+
+------
+
+### 请求来源
+
+- 用户身份来自：
+  - Authentik session / Forward Auth header
+- invitation 上下文来自：
+  - cookie 或 server session（推荐）
+  - ❗ 不依赖前端 body 传递
+
+------
+
+### 行为逻辑（必须幂等）
+
+```
+IF 有 pending invitation:
+    校验 email 匹配
+    创建 / 更新 membership
+    标记 invitation = consumed（原子或补偿）
+```
+
+------
+
+### 返回格式（冻结）
+
+```
+200 OK
+
+{
+  "hasWorkspace": true,
+  "workspaceId": "ws_xxx" | null,
+  "needsWorkspaceSelection": false
+}
+```
+
+------
+
+### 重试语义
+
+- 允许重复调用
+- 不允许重复创建 membership
+- 不允许重复消费 invitation
+
+------
+
+## A4. 网关与鉴权信任边界（冻结）
+
+### Traefik + Authentik Forward Auth
+
+#### 统一入口
+
+```
+*.crewclaw.app → Traefik → Authentik Forward Auth → App
+```
+
+------
+
+### 应用层唯一信任来源（必须）
+
+应用层**只信任以下 header**：
+
+```
+X-authentik-uid
+X-authentik-email
+X-authentik-username（可选）
+```
+
+------
+
+### 禁止
+
+- ❌ 不解析 JWT（MVP）
+- ❌ 不信任前端传 userId
+- ❌ 不直连 Authentik API 获取用户身份
+
+------
+
+### Callback / Public Path 放行
+
+必须绕过鉴权：
+
+```
+/api/v1/invitations/*
+/workspace-entry
+```
+
+------
+
+## A5. Workspace / 用户关系规则（冻结）
+
+### 关系定义
+
+- 一个 user：
+  - ✅ 可以属于多个 workspace
+- 一个 workspace：
+  - ✅ 可以有多个 user
+
+------
+
+### 登录后跳转规则
+
+```
+IF membership == 1:
+    自动进入 workspace
+
+IF membership > 1:
+    进入 /workspace-entry
+
+IF membership == 0:
+    hasWorkspace = false
+```
+
+------
+
+### 禁用规则（强制）
+
+```
+user.disabled → 拒绝所有访问
+membership.disabled → 不可进入该 workspace
+```
+
+------
+
+## A6. 事务与一致性模型（冻结）
+
+### 强一致推荐路径（优先）
+
+```
+单事务：
+    consume invitation
+    create membership
+```
+
+------
+
+### 若无法单事务（允许）
+
+必须实现补偿：
+
+```
+IF membership 创建成功但 invitation 未标记：
+    后续 post-login 自动修复
+```
+
+------
+
+### 不允许
+
+- ❌ invitation consumed 但 membership 不存在（无补偿）
+- ❌ 非幂等写入
+
+------
+
+## A7. 最小联调用例（必须通过）
+
+### 1. 新用户邀请
+
+- start → 注册 → post-login → membership 创建
+
+### 2. 已登录用户接受邀请
+
+- start → post-login → 直接绑定
+
+### 3. token 重复点击
+
+- 不报错，不重复绑定
+
+### 4. post-login 重试
+
+- 不重复写入
+
+### 5. expired token
+
+- 返回 `EXPIRED`
+
+### 6. revoked token
+
+- 返回 `REVOKED`
+
+### 7. email mismatch
+
+- 返回 `EMAIL_MISMATCH`
+
+### 8. disabled user
+
+- 登录后拒绝访问
+
+---
+
+v0.7-authentik-frozen  
+reno  
+2026-03-23
+
