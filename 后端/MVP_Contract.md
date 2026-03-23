@@ -1,0 +1,406 @@
+# CrewClaw 平台 MVP 开发基线总契约（Authentik 接入版）
+
+统一 1 到 6 模块在“官方 Authentik 首版接入”条件下的职责边界、字段约定、状态枚举、错误码和联调流程。
+
+| 文档定位 | 模块协作总契约 |
+| --- | --- |
+| 适用阶段 | MVP 首版上线 |
+| 本版重点 | 增加 Authentik 首次管理员初始化、本地密码登录、邀请制接入、首登完成绑定、密码归属策略与 Traefik + Outpost 前置鉴权规则 |
+| 本版原则 | 不改上游源码、先跑通首版、边界清晰、便于 Cursor 直接落地 |
+| 当前版本 | v0.6-authentik |
+
+---
+
+## 1. MVP 总体原则
+
+| 项 | 说明 |
+| --- | --- |
+| 身份系统 | 官方 Authentik |
+| 首版登录方式 | 仅本地用户名/邮箱 + 密码 |
+| 平台模式 | 管理员提供服务，普通用户只使用自己的 workspace |
+| 邀请方式 | 平台 invitation + Authentik enrollment flow |
+| 用户首次接入 | 通过一次性 invitation 链接进入完成接入页 |
+| 工作区鉴权 | Traefik + Authentik Proxy Outpost + Forward Auth |
+| 密码归属 | 统一交给 Authentik 管理 |
+| 首版非目标 | 第三方登录、企业目录同步、复杂审批流、复杂共享空间权限、复杂费用管理 |
+
+---
+
+## 2. 全局统一字段与枚举
+
+### 2.1 用户相关
+
+| 字段 | 说明 |
+| --- | --- |
+| userId | CrewClaw 平台内部用户唯一标识，例如 `u_001` |
+| subjectId | 外部身份唯一标识，例如 `authentik:12345` |
+| tenantId | MVP 固定为 `t_default` |
+| role | `user / admin` |
+| user.status | `active / disabled` |
+| auth.method | `local_password`（首版固定） |
+| auth.provider | `authentik` |
+
+### 2.2 runtime 相关
+
+| 字段 | 说明 |
+| --- | --- |
+| desiredState | `running / stopped / deleted` |
+| observedState | `creating / running / stopped / error / deleted` |
+| browserUrl | 浏览器可访问地址 |
+| internalEndpoint | 平台内部访问地址 |
+| retentionPolicy | `preserve_workspace / wipe_workspace` |
+
+### 2.3 invitation 相关
+
+| 字段 | 说明 |
+| --- | --- |
+| invitationId | 平台邀请唯一标识 |
+| inviteTokenHash | 平台一次性 token 哈希 |
+| invitation.status | `pending / consumed / revoked / expired` |
+| targetEmail | 被邀请邮箱 |
+| workspaceId | 目标工作区 |
+| invitation.role | 被邀请后获得的业务角色 |
+| authentikInvitationRef | Authentik 侧 invitation 引用 |
+| consumedByUserId | 最终消费该 invitation 的用户 |
+
+### 2.4 任务状态
+
+| 字段 | 说明 |
+| --- | --- |
+| task.status | `pending / running / succeeded / failed / canceled` |
+
+---
+
+## 3. UserRuntimeBinding 冻结结构
+
+保留原冻结结构，不因为 Authentik 接入而改动：
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| runtimeId | 是 | 用户唯一 runtime 标识 |
+| volumeId | 是 | 持久化卷标识 |
+| imageRef | 是 | runtime 镜像引用 |
+| desiredState | 是 | 平台目标状态 |
+| observedState | 是 | 宿主机观测状态 |
+| browserUrl | 否 | 浏览器入口 |
+| internalEndpoint | 否 | 内部访问地址 |
+| retentionPolicy | 是 | 默认 `preserve_workspace` |
+| lastError | 否 | 最近一次失败信息 |
+
+**新增说明**：
+
+`browserUrl` 能否真正返回给前端，不仅取决于 runtime 状态，也取决于：
+
+1. 当前请求已通过 Authentik 前置鉴权；
+2. 当前 CrewClaw 用户状态为 `active`；
+3. 当前用户已具备合法 workspace 绑定；
+4. 当前 runtime 属于该用户。
+
+---
+
+## 4. 新增冻结对象：Invitation
+
+本版把 `Invitation` 也提升为冻结对象。
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| invitationId | 是 | 平台邀请唯一标识 |
+| inviteTokenHash | 是 | 一次性 token 哈希 |
+| targetEmail | 是 | 受邀邮箱 |
+| workspaceId | 是 | 邀请目标工作区 |
+| role | 是 | 邀请后绑定角色 |
+| status | 是 | `pending / consumed / revoked / expired` |
+| expiresAt | 是 | 过期时间 |
+| consumedAt | 否 | 消费时间 |
+| consumedByUserId | 否 | 消费用户 |
+| authentikInvitationRef | 否 | Authentik 侧 invitation 标识 |
+| lastError | 否 | 最近一次失败原因 |
+
+**冻结原则**：
+
+- Invitation 是 CrewClaw 的业务对象；
+- Authentik invitation 只是身份层执行引用；
+- `workspaceId / role / status` 以 CrewClaw 为真相；
+- `用户创建 / 密码设置 / 会话建立` 以 Authentik 为真相。
+
+---
+
+## 5. 模块间依赖关系（修订版）
+
+| 模块 | 职责 |
+| --- | --- |
+| 模块 1：身份与访问接入 | 对接 Authentik 会话、读取前置鉴权上下文、首次登录触发 `/internal/users/sync`、处理 invitation 完成后的 post-login 收口 |
+| 模块 2：租户与用户资源控制 | 维护 User / Invitation / WorkspaceMembership / UserRuntimeBinding 真相；负责首次 binding 初始化 |
+| 模块 3：Runtime 编排 | 只在用户已通过认证且业务绑定合法的前提下处理 runtime 启停删 |
+| 模块 4：模型接入、平台凭据代理与用量归集 | 与 Authentik 解耦，不处理密码与 invitation，只处理模型治理 |
+| 模块 5：管理后台 | 负责 invitation 创建、查看、撤销、用户治理、runtime 查看 |
+| 模块 6：用户工作台 | 负责用户首次接入完成后的工作台承接、runtime 状态与 workspace 进入 |
+
+---
+
+## 6. 关键跨模块规则
+
+### 6.1 统一身份归属
+
+- 身份认证由 Authentik 负责。
+- CrewClaw 不自行校验用户密码。
+- CrewClaw 只消费 Authentik 已认证后的会话与身份上下文。
+
+### 6.2 统一登录方式
+
+首版只允许：
+
+- 本地用户目录；
+- 本地密码登录。
+
+首版禁止：
+
+- Google / GitHub / 企业 SSO / 微信 / 钉钉 / 飞书；
+- 混合登录入口同时上线。
+
+### 6.3 统一 invitation 语义
+
+- 管理员创建 invitation 必须绑定目标 `workspaceId` 与 `role`。
+- invitation 必须有一次性 token。
+- invitation 消费后必须不可再次使用。
+- 平台 invitation 一旦撤销，对应入口必须立即失效。
+
+### 6.4 invitation 真相边界
+
+- Authentik 负责 enrollment flow 执行。
+- CrewClaw 负责 invitation 是否还能使用，以及最终绑定到哪个 workspace / role。
+
+### 6.5 post-login 收口规则
+
+用户通过 Authentik 完成 enrollment 或登录后，模块 1 必须执行：
+
+1. `/internal/users/sync`
+2. 检查是否存在待消费 invitation 上下文
+3. 若存在，则调用模块 2 完成 workspace / role 绑定
+4. 把 invitation 标记为 `consumed`
+5. 清理待消费上下文
+
+### 6.6 runtime 启动前置条件
+
+在模块 3 接收 `ensure_running` 前，必须满足：
+
+- 用户已登录；
+- 用户不为 `disabled`；
+- 用户具备合法 workspace 绑定；
+- 若当前页面来自 invitation 完成流程，则 invitation 已成功收口。
+
+### 6.7 browserUrl 安全模型
+
+- `browserUrl` 只表示浏览器入口。
+- 所有 workspace 子域名必须经 Traefik + Authentik Forward Auth。
+- 知道 URL 不等于可访问。
+
+### 6.8 disabled 收口规则
+
+- 除 `/api/v1/auth/me` 外，disabled 用户访问业务接口统一返回 `403 USER_DISABLED`。
+- disabled 用户不可继续消费 invitation。
+- disabled 用户若已有运行中 runtime，系统应尽快收敛到 `stopped`。
+
+---
+
+## 7. Authentik 首次管理员初始化契约
+
+### 7.1 首次初始化基线
+
+- 首次管理员初始化使用官方流程完成。
+- 平台不自建“初始化管理员密码设置页”。
+- 平台只承接完成后的登录态与身份同步。
+
+### 7.2 “admin”命名约束
+
+- 文档层面把首登账户视为“管理员账户”。
+- 若业务层坚持用户名必须为 `admin`，应通过初始化后的二次创建策略解决。
+- 不通过修改上游源码改变官方默认初始化行为。
+
+### 7.3 日常管理员策略
+
+推荐：
+
+- 首次初始化管理员用于 bootstrap；
+- 日常平台管理由本地管理员账号承担；
+- bootstrap 账号只保留 break-glass 应急用途。
+
+---
+
+## 8. 邀请制接入契约
+
+### 8.1 邀请创建
+
+管理员创建 invitation 时必须提供：
+
+- `targetEmail`
+- `workspaceId`
+- `role`
+- `expiresAt` 或默认有效期
+
+系统必须生成：
+
+- 平台一次性 token
+- 对应 `Invitation` 记录
+- 可选的 Authentik invitation 引用
+
+### 8.2 邀请预览
+
+用户打开 invitation 链接后，平台必须能返回：
+
+- 邀请是否有效；
+- 目标邮箱；
+- 目标 workspace；
+- 目标 role；
+- 是否已消费 / 已撤销 / 已过期。
+
+### 8.3 邀请启动
+
+用户点击“继续接入”后：
+
+- 平台先验证 platform token；
+- 再写入短期 pending invitation 会话；
+- 再跳转到 Authentik enrollment flow。
+
+### 8.4 邀请完成
+
+Authentik 完成 enrollment / login 后：
+
+- CrewClaw 必须以当前 `subjectId` 关联用户；
+- 完成目标 workspace / role 绑定；
+- 标记 invitation `consumed`；
+- 后续同一 token 不再可用。
+
+### 8.5 冲突策略
+
+若出现以下情况，必须拒绝接入并显示明确错误：
+
+- token 不存在；
+- token 已过期；
+- token 已撤销；
+- token 已消费；
+- 当前登录用户与 invitation 预期邮箱不一致且策略不允许覆盖；
+- invitation 指向的 workspace 不存在或已关闭。
+
+---
+
+## 9. 密码与首登策略契约
+
+### 9.1 首版正式基线
+
+本版冻结采用：
+
+- invitation completion flow 内直接设置密码；
+- 完成后自动登录；
+- 后续密码修改走 Authentik 自身 flow。
+
+### 9.2 平台侧禁止行为
+
+- 禁止在 CrewClaw 数据库保存用户密码；
+- 禁止平台自己生成“临时密码”并作为正式密码存储；
+- 禁止绕开 Authentik 自行实现第二套密码修改 API。
+
+### 9.3 可选扩展
+
+若后续要启用“下次登录强制改密”，应通过 Authentik Flow 完成，而不是在平台 API 中手写状态机。
+
+---
+
+## 10. 联调主流程（修订版）
+
+### 10.1 首次管理员初始化
+
+1. 启动 Authentik。
+2. 管理员完成官方初始化流程。
+3. Authentik 管理后台完成应用、Provider、Outpost、Flow 配置。
+4. 访问 CrewClaw 控制面。
+5. 模块 1 同步管理员用户。
+
+### 10.2 管理员创建邀请
+
+1. 模块 5 提交 invitation 创建请求。
+2. 模块 2 落库 `Invitation`。
+3. 模块 1 / 集成层准备 Authentik enrollment invitation。
+4. 返回 invite URL。
+
+### 10.3 用户完成接入
+
+1. 用户打开 `/invite/{token}`。
+2. 模块 2 校验 invitation。
+3. 模块 1 生成跳转到 Authentik enrollment flow 的入口。
+4. 用户在 Authentik 中完成资料和密码设置。
+5. Authentik 登录成功后回到 CrewClaw。
+6. 模块 1 调 `/internal/users/sync`。
+7. 模块 2 根据 pending invitation 完成绑定。
+8. 模块 6 跳转工作台。
+
+### 10.4 正常登录并进入工作区
+
+1. 用户访问平台域名。
+2. Traefik + Authentik 完成前置鉴权。
+3. 模块 1 获取 AuthContext。
+4. 模块 6 获取 `/workspace-entry`。
+5. `ready=true` 时跳转 `browserUrl`。
+
+---
+
+## 11. 错误码与验收口径
+
+### 11.1 新增错误码
+
+| HTTP | code | 说明 |
+| --- | --- | --- |
+| 404 | INVITATION_NOT_FOUND | invitation 不存在 |
+| 409 | INVITATION_ALREADY_CONSUMED | invitation 已使用 |
+| 409 | INVITATION_REVOKED | invitation 已撤销 |
+| 410 | INVITATION_EXPIRED | invitation 已过期 |
+| 422 | INVITATION_EMAIL_MISMATCH | 当前接入邮箱与邀请目标不匹配 |
+| 422 | INVITATION_WORKSPACE_INVALID | invitation 指向的 workspace 无效 |
+
+### 11.2 功能验收
+
+必须满足：
+
+1. 管理员可完成首次初始化。
+2. 平台首版只显示本地密码登录。
+3. 管理员可创建绑定 workspace / role 的 invitation。
+4. invitation 为一次性 token。
+5. 用户可通过 invitation 完成接入。
+6. 用户首次接入后能进入平台。
+7. workspace 子域名受 Authentik 前置鉴权保护。
+8. 用户密码由 Authentik 管理。
+
+### 11.3 安全验收
+
+必须满足：
+
+- 知道 `browserUrl` 不能绕过登录直接访问；
+- invitation token 不能重复消费；
+- disabled 用户不能继续访问业务接口；
+- 平台数据库不保存 Authentik 密码明文或散列。
+
+---
+
+## 12. MVP 之外暂不纳入基线的内容
+
+- Google / GitHub / 企业 SSO / 微信 / 钉钉 / 飞书登录；
+- SCIM / LDAP / AD 同步；
+- MFA 强制上线；
+- invitation 审批流；
+- 多 runtime / 多 workspace 自助切换；
+- 用户自助 provider key 管理；
+- 复杂组织架构同步。
+
+---
+
+## 13. 最终契约结论
+
+本版 MVP 契约的核心不是“让 Authentik 接管一切”，而是：
+
+- **Authentik 接管身份、密码、会话和 enrollment flow**；
+- **CrewClaw 接管用户业务状态、workspace / role 绑定、runtime 与资源治理**；
+- **Invitation 采用业务真相与身份执行解耦**；
+- **首版只开本地密码，后续再向外扩展**。
+
+这套边界一旦冻结，前后端与平台服务就可以并行开发，而不需要在开发中途反复重谈认证模型。
+
