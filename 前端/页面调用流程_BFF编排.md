@@ -77,6 +77,7 @@
 页面规则：
 
 - 登录方式只展示 `local_password`
+- 登录入口文案以 `/auth/options.methods[0].label` 为准（当前固定为 `账号密码登录`）
 - 不展示 Google、GitHub、企业 SSO 等入口
 - 若 `/auth/me` 已表明已登录，直接跳 `/workspace-entry` 或用户上次入口
 

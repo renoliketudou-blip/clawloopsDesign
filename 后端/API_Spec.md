@@ -237,7 +237,13 @@ GET `/api/v1/auth/access`
 
 GET `/api/v1/auth/options`
 
-**首版固定响应**：
+接口约定（当前实现）：
+
+- 公开接口，不要求用户登录态
+- 固定返回 `200`
+- 首版仅返回一种登录方式：`local_password`
+
+**首版固定响应（与实现对齐）**：
 
 ```json
 {
@@ -246,7 +252,7 @@ GET `/api/v1/auth/options`
     {
       "type": "local_password",
       "enabled": true,
-      "label": "账号密码"
+      "label": "账号密码登录"
     }
   ]
 }

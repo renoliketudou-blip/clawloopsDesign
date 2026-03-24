@@ -669,7 +669,7 @@ RM 只基于容器事实返回状态：
 
 ```json
 {
-  "status": "ok"
+  "status": "healthy"
 }
 ```
 
