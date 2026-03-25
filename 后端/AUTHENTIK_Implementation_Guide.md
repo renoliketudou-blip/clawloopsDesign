@@ -371,7 +371,7 @@ Enrollment Flow 建议顺序：
 6. 绑定 workspace / workspaceRole
 7. 标记 invitation consumed
 8. 清理 cookie / session
-9. 跳工作台
+9. 若 `appRole=admin` 则跳转管理后台；否则进入工作台
 
 ### 8.5 `start` 与 `post-login` 的关键规则
 
@@ -531,6 +531,8 @@ http:
 - 所有 workspace 子域名必须统一经过 Traefik + Authentik Forward Auth
 - `browserUrl` 属于受保护入口，不是匿名公开地址
 - 前端只有在 `ready=true` 时才允许跳转
+- `admin` 登录后默认进入 `/admin`
+- `workspace-entry` 只负责非管理员用户的工作区跳转
 
 ---
 
@@ -794,7 +796,7 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 14. 固定 runtime 网络为 clawloops_shared，固定 internalEndpoint 为 http://rt-<runtimeId>:18789
 15. 增加 RUNTIME_CONTRACT_DRIFT / RUNTIME_START_FAILED / RUNTIME_STOP_FAILED / RUNTIME_DELETE_FAILED
 16. 平台禁止保存密码、禁止实现独立改密 API
-17. workspace-entry 是唯一跳转入口，前端只在 ready=true 时跳转
+17. `admin` 登录后默认进入 `/admin`；`workspace-entry` 是唯一工作区跳转入口，前端只在 ready=true 时跳转
 
 推荐链路：
 - 平台 token 负责业务入口
@@ -838,11 +840,15 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 
 不推荐。会让联调复杂度暴涨。
 
-### 误区 5：拿到 `browserUrl` 就直接跳
+### 误区 5：所有人登录后都先进 `workspace-entry`
+
+不对。`admin` 登录后默认应进入 `/admin`；只有非管理员用户才进入 `workspace-entry` 流程。
+
+### 误区 6：拿到 `browserUrl` 就直接跳
 
 不对。前端只能在 `workspace-entry.ready=true` 时跳转，且 URL 始终受前置鉴权保护。
 
-### 误区 6：让 RuntimeManager 自己“顺手修好” drift
+### 误区 7：让 RuntimeManager 自己“顺手修好” drift
 
 不对。RM 只能检测并返回 `RUNTIME_CONTRACT_DRIFT`，真正是否 stop+delete+recreate 由 Orchestrator 决策。
 
@@ -866,7 +872,7 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 6. **把 invitation 链接定义成一次性免密码接入入口**
 7. **在 enrollment flow 里直接设置用户密码**
 8. **采用延迟创建 Authentik invitation 的模式**
-9. **把 `workspace-entry` 定义成唯一跳转入口**
+9. **把管理员首页与工作区跳转分开：`admin` 默认进 `/admin`，非管理员用户再走 `workspace-entry`**
 10. **把 runtime V1 明确定成 `clawloops_shared + 18789 + rt-<runtimeId> + compat 必填`**
 11. **让 Orchestrator 负责异步任务，让 RuntimeManager 只做同步执行器**
 

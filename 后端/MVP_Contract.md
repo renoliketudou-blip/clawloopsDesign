@@ -163,8 +163,8 @@
 | 模块 2：租户与用户资源控制 | 维护 User / Invitation / WorkspaceMembership / UserRuntimeBinding 真相；负责首次 binding 初始化；保证 invitation 消费与 membership 绑定的原子性或补偿逻辑 |
 | 模块 3：Runtime 编排 | 只在用户已通过认证且业务绑定合法的前提下处理 runtime 启停删；对外返回异步 task；对内调用 RM 同步接口 |
 | 模块 4：模型接入、平台凭据代理与用量归集 | 与 Authentik 解耦，不处理密码与 invitation，只处理模型治理 |
-| 模块 5：管理后台 | 负责 invitation 创建、查看、撤销、用户治理、runtime 查看 |
-| 模块 6：用户工作台 | 负责用户首次接入完成后的工作台承接、runtime 状态展示与 `workspace-entry` 跳转 |
+| 模块 5：管理后台 | 负责 invitation 创建、查看、撤销、用户治理、runtime 查看，并作为 `admin` 登录后的默认首页 |
+| 模块 6：用户工作台 | 负责普通用户首次接入完成后的工作台承接、runtime 状态展示与 `workspace-entry` 跳转 |
 | RuntimeManager | 同步执行容器动作、目录初始化、挂载、网络接入、事实状态查询；不维护外层任务状态机 |
 
 ---
@@ -252,7 +252,9 @@
 - 所有 workspace 子域名必须经 Traefik + Authentik Forward Auth
 - 知道 URL 不等于可访问
 - 只有 `ready=true` 时前端才能跳转
-- `workspace-entry` 是唯一跳转入口；`runtime/status` 只用于展示状态
+- `admin` 登录后默认进入 `/admin`
+- `workspace-entry` 是唯一工作区跳转入口；仅服务非管理员用户
+- `runtime/status` 只用于展示状态
 
 ### 6.10 disabled 收口规则
 
@@ -450,15 +452,16 @@ Authentik 完成 enrollment / login 后：
 6. 模块 1 调 `/internal/users/sync`
 7. 模块 1 执行邮箱强校验
 8. 模块 2 根据 pending invitation 幂等完成绑定
-9. 模块 6 跳转工作台
+9. 若 `appRole=admin` 则进入 `/admin`；否则由模块 6 承接工作区跳转
 
 ### 10.4 正常登录并进入工作区
 
 1. 用户访问平台域名
 2. Traefik + Authentik 完成前置鉴权
-3. 模块 1 获取 AuthContext
-4. 模块 6 获取 `/workspace-entry`
-5. `ready=true` 时才允许跳转 `browserUrl`
+3. 模块 1 获取 AuthContext 并识别 `appRole`
+4. 若 `appRole=admin`，前端直接进入 `/admin`
+5. 若为非管理员用户，模块 6 获取 `/workspace-entry`
+6. `ready=true` 时才允许跳转 `browserUrl`
 
 ### 10.5 runtime 启动链路
 
@@ -541,7 +544,7 @@ Authentik 完成 enrollment / login 后：
 - **ClawLoops 接管用户业务状态、workspace / role 绑定、runtime 与资源治理**
 - **Invitation 采用业务真相与身份执行解耦，首版统一为延迟创建模式**
 - **首版只开本地密码，后续再向外扩展**
-- **工作区跳转统一由 `workspace-entry` 收口，前端只在 `ready=true` 时跳转**
+- **`admin` 登录后默认进入 `/admin`；非管理员用户的工作区跳转统一由 `workspace-entry` 收口，前端只在 `ready=true` 时跳转**
 - **Orchestrator 对外异步，RuntimeManager 对内同步**
 - **runtime V1 统一固定为 `clawloops_shared + 18789 + rt-<runtimeId> + compat 必填`**
 
@@ -675,6 +678,20 @@ IF 有 pending invitation:
 
 ```json
 {
+  "entryType": "admin_console",
+  "redirectTo": "/admin",
+  "hasWorkspace": false,
+  "workspaceId": null,
+  "needsWorkspaceSelection": false
+}
+```
+
+非管理员用户示例：
+
+```json
+{
+  "entryType": "workspace",
+  "redirectTo": "/workspace-entry",
   "hasWorkspace": true,
   "workspaceId": "ws_xxx",
   "needsWorkspaceSelection": false
@@ -723,13 +740,16 @@ X-authentik-username
 ### 登录后跳转规则
 
 ```text
-IF membership == 1:
+IF appRole == admin:
+    进入 /admin
+
+IF appRole != admin AND membership == 1:
     自动进入 workspace
 
-IF membership > 1:
+IF appRole != admin AND membership > 1:
     进入 /workspace-entry
 
-IF membership == 0:
+IF appRole != admin AND membership == 0:
     hasWorkspace = false
 ```
 

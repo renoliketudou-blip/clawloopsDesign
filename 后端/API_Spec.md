@@ -23,7 +23,7 @@
 | internal 鉴权 | internal API 必须通过服务间鉴权（如 mTLS 或 internal token），并且禁止公网访问 |
 | disabled 语义 | 除 `/api/v1/auth/me` 外，disabled 用户访问业务接口统一返回 `403 USER_DISABLED`；但 `/api/v1/auth/access` 永远返回 `200`，仅用于状态判断 |
 | workspace 访问 | `browserUrl` 仅是受保护入口地址；所有 workspace 子域名必须统一经过 Traefik + Authentik Forward Auth |
-| 跳转规则 | 只有 `ready=true` 才允许前端跳转到 `browserUrl`；知道 URL 不代表可访问 |
+| 跳转规则 | `admin` 登录后默认进入 `/admin`；非管理员用户只有在 `ready=true` 时才允许跳转到 `browserUrl`；知道 URL 不代表可访问 |
 | 字段命名 | 以本文件“字段冻结清单”为唯一基线，禁止别名漂移 |
 
 ---
@@ -113,8 +113,9 @@
 - `task.status` = 操作生命周期
 - `observedState` = 资源状态
 - `ready` = 最终可访问状态
-- 前端跳转只看 `ready`
-- `workspace-entry` 是唯一跳转入口接口
+- `admin` 登录后默认进入 `/admin`
+- 非管理员用户的工作区跳转只看 `ready`
+- `workspace-entry` 是唯一工作区跳转入口接口
 - `runtime/status` 仅用于状态展示，不作为最终跳转依据
 
 ### 3.8 runtime V1 冻结补充
@@ -151,7 +152,7 @@
 | POST | `/api/v1/users/me/runtime/delete` | 删除 runtime | 用户 |
 | GET | `/api/v1/runtime/tasks/{taskId}` | 查询 runtime 任务状态 | 用户 / admin |
 | GET | `/api/v1/models` | 获取当前用户可见模型列表（只读） | 用户 |
-| GET | `/api/v1/workspace-entry` | 获取当前用户工作区入口（唯一跳转入口） | 用户 |
+| GET | `/api/v1/workspace-entry` | 获取当前用户工作区入口（唯一工作区跳转入口） | 用户 |
 | GET | `/api/v1/admin/users` | 获取用户列表 | admin |
 | GET | `/api/v1/admin/users/{userId}` | 获取用户详情 | admin |
 | PATCH | `/api/v1/admin/users/{userId}/status` | 启用 / 禁用用户 | admin |
@@ -281,6 +282,11 @@ POST `/api/v1/auth/post-login`
   "result": "already_bound_or_consumed"
 }
 ```
+
+跳转规则：
+
+- `appRole=admin` 时，`redirectTo` 返回 `/admin`
+- 非管理员用户时，`redirectTo` 返回 `/workspace-entry`
 
 ---
 
@@ -452,6 +458,11 @@ GET `/api/v1/models`
 ### 7.8 获取工作区入口
 
 GET `/api/v1/workspace-entry`
+
+说明：
+
+- 该接口只服务非管理员用户的工作区跳转
+- `admin` 登录后的默认首页是 `/admin`，不依赖此接口
 
 **响应示例**：
 
@@ -702,8 +713,9 @@ POST `/internal/runtime-manager/containers/ensure-running`
 
 ### 11.4 工作区跳转
 
-1. 先调 `/api/v1/workspace-entry`
-2. 只有 `ready=true` 才跳转到 `browserUrl`
+1. 若当前用户为 `admin`，直接进入 `/admin`
+2. 若当前用户不是 `admin`，先调 `/api/v1/workspace-entry`
+3. 只有 `ready=true` 才跳转到 `browserUrl`
 
 ---
 
@@ -744,7 +756,7 @@ POST `/internal/runtime-manager/containers/ensure-running`
 2. **Invitation 采用双层模型，但首版一律延迟创建 Authentik invitation**
 3. **`POST /api/v1/auth/post-login` 作为幂等收口入口**
 4. **`/auth/access` 永远返回 `200`，仅用于状态判断**
-5. **`workspace-entry` 是唯一跳转入口，前端只在 `ready=true` 时跳转**
+5. **`admin` 登录后默认进入 `/admin`；`workspace-entry` 是唯一工作区跳转入口，前端只在 `ready=true` 时跳转**
 6. **runtime 删除改为 `POST /api/v1/users/me/runtime/delete`，不再依赖 DELETE body**
 7. **所有 workspace 子域名必须统一经过 Traefik + Authentik Forward Auth**
 8. **RuntimeManager internal 接口同步执行，`taskId` 只存在于 Orchestrator 对外层**

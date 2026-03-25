@@ -250,7 +250,7 @@ Authentik 负责执行身份侧 enrollment：
 8. Authentik 完成用户创建、密码设置与自动登录
 9. 浏览器回到 ClawLoops `post-login`
 10. ClawLoops 完成 user sync、邮箱强校验、membership 绑定与 invitation consume
-11. 用户进入工作台
+11. 若 `appRole=admin` 则进入管理后台；否则进入工作台
 
 ### 7.5 token 语义冻结
 
@@ -390,7 +390,14 @@ ClawLoops 明确禁止：
 - `task.status` = 操作生命周期
 - `observedState` = 资源状态
 - `ready` = 最终可访问状态
-- 前端跳转只看 `ready`
+- `browserUrl` 跳转只看 `ready`
+
+### 10.4 登录后首页规则
+
+- `appRole=admin` 的用户登录后默认进入 `/admin`
+- 平台管理员首页不依赖 workspace membership
+- 非管理员用户登录后再进入 `workspace-entry` 流程
+- `workspace-entry` 只负责普通用户的工作区跳转，不承担管理员首页决策
 
 ---
 
@@ -430,8 +437,8 @@ ClawLoops 明确禁止：
 | 模块 2：租户与用户资源控制 | 维护 User / Invitation / WorkspaceMembership / UserRuntimeBinding 真相；保证 invitation consume 与 membership binding 的原子性或补偿逻辑 |
 | 模块 3：Runtime 编排 | 对用户侧暴露异步任务；决定何时调用 RM；在收到 drift 后决定是否 stop+delete+recreate |
 | 模块 4：模型接入 | 不变 |
-| 模块 5：管理后台 | 新增 invitation 创建、查看、撤销；仍负责用户治理 |
-| 模块 6：用户工作台 | 新增“邀请完成后首次进入”承接逻辑；工作区跳转只依赖 `workspace-entry` |
+| 模块 5：管理后台 | 新增 invitation 创建、查看、撤销；仍负责用户治理，并作为 `admin` 登录后的默认首页 |
+| 模块 6：用户工作台 | 新增“邀请完成后首次进入”承接逻辑；仅负责非管理员用户的工作区承接，工作区跳转只依赖 `workspace-entry` |
 | RuntimeManager | 同步执行容器动作、目录初始化、最小事实观测；不维护外层任务状态机 |
 
 ---
@@ -469,7 +476,7 @@ ClawLoops 明确禁止：
 7. 模块 1 完成 `/internal/users/sync`
 8. 模块 1 执行邮箱强校验
 9. 模块 2 幂等完成 `workspace / role` 绑定，并把 invitation 标记为 `consumed`
-10. 用户进入工作台并可启动 runtime
+10. 若为 `admin` 则进入管理后台；若为普通用户则进入工作台并可启动 runtime
 
 ### 13.4 用户启动 runtime
 
@@ -594,7 +601,7 @@ networks:
 - **Traefik + Outpost 负责统一前置鉴权**
 - **Invitation 用双层模型把业务 token 与身份 enrollment 解耦，并在首版采用延迟创建**
 - **首版只开本地账号密码，后续再逐步加外部身份源**
-- **工作区跳转统一收敛到 `workspace-entry`，且前端只在 `ready=true` 时跳转**
+- **`admin` 登录后默认进入 `/admin`；非管理员用户的工作区跳转统一收敛到 `workspace-entry`，且前端只在 `ready=true` 时跳转**
 - **Orchestrator 负责对外异步编排，RuntimeManager 负责对内同步执行**
 - **runtime V1 统一固定为 `clawloops_shared + 18789 + rt-<runtimeId> + compat 必填`**
 
