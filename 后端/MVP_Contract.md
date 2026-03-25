@@ -8,7 +8,7 @@
 | 适用阶段 | MVP 首版上线 |
 | 本版重点 | 增加管理员初始化冻结口径、邀请制接入生命周期、首登密码流程、post-login 幂等、runtime 跳转规则与 runtime V1 contract |
 | 本版原则 | 不改上游源码、先跑通首版、边界清晰、字段冻结、便于直接落地 |
-| 当前版本 | v0.8-authentik-runtime-frozen |
+| 当前版本 | v0.10-user-path-frozen |
 
 ---
 
@@ -25,6 +25,7 @@
 | 工作区鉴权 | Traefik + Authentik Proxy Outpost + Forward Auth |
 | 密码归属 | 统一交给 Authentik 管理 |
 | runtime V1 | 固定镜像、固定端口、固定网络、固定 alias、`compat` 必填 |
+| 用户体验基线 | 普通用户登录后默认进入 `/app`，由工作台承接首次使用与回访使用 |
 | 首版非目标 | 第三方登录、企业目录同步、复杂审批流、复杂共享空间权限、复杂费用管理 |
 
 ---
@@ -223,6 +224,12 @@
 5. 把 invitation 标记为 `consumed`
 6. 清理待消费上下文
 
+收口后的默认落点：
+
+- `admin` 用户进入 `/admin`
+- 普通用户进入 `/app`
+- `/workspace-entry` 仅在用户主动进入工作区或短时等待 ready 时使用
+
 **幂等要求**：
 
 - `post-login` 必须幂等
@@ -253,6 +260,7 @@
 - 知道 URL 不等于可访问
 - 只有 `ready=true` 时前端才能跳转
 - `admin` 登录后默认进入 `/admin`
+- 普通用户登录后默认进入 `/app`
 - `workspace-entry` 是唯一工作区跳转入口；仅服务非管理员用户
 - `runtime/status` 只用于展示状态
 
@@ -400,6 +408,7 @@ RM 的 `ensure-running` 请求中：
 - 目标 workspace
 - 目标 role
 - 是否已消费 / 已撤销 / 已过期
+- 若当前浏览器已存在登录态，前端可额外展示当前账号提示，帮助用户在继续前确认账号是否正确
 
 ### 8.3 邀请启动
 
@@ -410,6 +419,7 @@ RM 的 `ensure-running` 请求中：
 - 再写入短期 pending invitation 会话
 - 再创建或换取 Authentik enrollment flow URL
 - `start` 必须幂等
+- 前端在跳转前应明确提示用户当前账号可能与邀请邮箱不一致的风险
 
 ### 8.4 邀请完成
 
@@ -483,7 +493,7 @@ Authentik 完成 enrollment / login 后：
 6. 模块 1 调 `/internal/users/sync`
 7. 模块 1 执行邮箱强校验
 8. 模块 2 根据 pending invitation 幂等完成绑定
-9. 若 `appRole=admin` 则进入 `/admin`；否则由模块 6 承接工作区跳转
+9. 若 `appRole=admin` 则进入 `/admin`；否则进入 `/app`，由模块 6 承接首次使用
 
 ### 10.4 正常登录并进入工作区
 
@@ -491,8 +501,9 @@ Authentik 完成 enrollment / login 后：
 2. Traefik + Authentik 完成前置鉴权
 3. 模块 1 获取 AuthContext 并识别 `appRole`
 4. 若 `appRole=admin`，前端直接进入 `/admin`
-5. 若为非管理员用户，模块 6 获取 `/workspace-entry`
-6. `ready=true` 时才允许跳转 `browserUrl`
+5. 若为非管理员用户，前端先进入 `/app`
+6. 用户点击“进入工作区”后，模块 6 获取 `/workspace-entry`
+7. `ready=true` 时才允许跳转 `browserUrl`
 
 ### 10.5 runtime 启动链路
 
@@ -534,7 +545,7 @@ Authentik 完成 enrollment / login 后：
 3. 管理员可创建绑定 workspace / role 的 invitation
 4. invitation 为一次性 platform token
 5. 用户可通过 invitation 完成接入并在 flow 中直接设置密码
-6. 用户首次接入后能进入平台
+6. 用户首次接入后能进入平台，并能在工作台明确知道下一步
 7. workspace 子域名受 Authentik 前置鉴权保护
 8. 用户密码由 Authentik 管理
 9. `post-login` 与 `start` 均支持幂等重试
@@ -575,7 +586,7 @@ Authentik 完成 enrollment / login 后：
 - **ClawLoops 接管用户业务状态、workspace / role 绑定、runtime 与资源治理**
 - **Invitation 采用业务真相与身份执行解耦，首版统一为延迟创建模式**
 - **首版只开本地密码，后续再向外扩展**
-- **`admin` 登录后默认进入 `/admin`；非管理员用户的工作区跳转统一由 `workspace-entry` 收口，前端只在 `ready=true` 时跳转**
+- **`admin` 登录后默认进入 `/admin`；普通用户登录后默认进入 `/app`；`workspace-entry` 只负责最终跳转与短时等待，前端只在 `ready=true` 时跳转**
 - **Orchestrator 对外异步，RuntimeManager 对内同步**
 - **runtime V1 统一固定为 `clawloops_shared + 18789 + rt-<runtimeId> + compat 必填`**
 
@@ -722,7 +733,7 @@ IF 有 pending invitation:
 ```json
 {
   "entryType": "workspace",
-  "redirectTo": "/workspace-entry",
+  "redirectTo": "/app",
   "hasWorkspace": true,
   "workspaceId": "ws_xxx",
   "needsWorkspaceSelection": false
@@ -734,6 +745,7 @@ IF 有 pending invitation:
 - `entryType` 至少支持 `admin_console | workspace`
 - `redirectTo` 由后端明确返回，前端不自行猜首页
 - `admin_console` 不要求返回 workspace 相关数据
+- 普通用户默认 `redirectTo=/app`
 
 ---
 
@@ -897,6 +909,6 @@ compatPortOnly = 18790
 
 ---
 
-v0.9-新增管理页面
+v0.10-用户自然走完修订
 reno  
-2026-03-25 14:47
+2026-03-25 16:05

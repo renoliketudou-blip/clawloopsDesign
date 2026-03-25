@@ -42,6 +42,7 @@
 - 不把 invitation 邮箱校验前移到前端判断
 - 不直接调用 `/internal/*`
 - 不直接请求 Authentik API 获取业务状态
+- 不把纯中转页当成普通用户登录后的默认落点
 
 ### 2.3 前端统一状态切片
 
@@ -121,6 +122,7 @@
 - `status` 只认 `pending | consumed | revoked`
 - `expired` 不在字段中单独出现，来源于接口错误码
 - 预览页只展示，不做业务消费
+- 若当前浏览器已有登录态，可额外展示当前账号提示，帮助用户在继续前确认账号是否正确
 
 ### 3.4 PostLoginResult
 
@@ -129,7 +131,7 @@
 ```json
 {
   "entryType": "workspace",
-  "redirectTo": "/workspace-entry",
+  "redirectTo": "/app",
   "hasWorkspace": true,
   "workspaceId": "ws_xxx",
   "needsWorkspaceSelection": false
@@ -144,7 +146,7 @@
   "userId": "u_001",
   "invitationApplied": true,
   "entryType": "workspace",
-  "redirectTo": "/workspace-entry",
+  "redirectTo": "/app",
   "result": "already_bound_or_consumed"
 }
 ```
@@ -159,6 +161,8 @@
   - `needsWorkspaceSelection`
   - `invitationApplied | false`
   - `result | null`
+- 非管理员用户的默认 `redirectTo` 应为 `/app`
+- `invitationApplied=true` 时，前端应用可用该字段决定是否强化“开始准备工作区”主 CTA
 
 管理员示例：
 
@@ -246,8 +250,10 @@
 ```json
 {
   "ready": true,
+  "hasWorkspace": true,
   "runtimeId": "rt_001",
-  "browserUrl": "https://u-001.clawloops.example.com"
+  "browserUrl": "https://u-001.clawloops.example.com",
+  "reason": null
 }
 ```
 
@@ -255,6 +261,8 @@
 
 - 这是唯一跳转工作区的依据
 - `ready=false` 时必须停留在控制面，不可跳转
+- `reason` 只用于用户提示，不替代 `ready`
+- `hasWorkspace=false` 时应进入可恢复的无工作区态
 
 ---
 
@@ -354,16 +362,16 @@
 | --- | --- | --- | --- |
 | `initializing` | 拿到登录态 | `callingPostLogin` | 显示“正在完成登录” |
 | `callingPostLogin` | `entryType=admin_console` | `postLoginSucceeded` | 跳 `/admin` |
-| `callingPostLogin` | `entryType=workspace && hasWorkspace=true && needsWorkspaceSelection=false` | `postLoginSucceeded` | 跳到工作台入口页 |
-| `callingPostLogin` | `entryType=workspace && hasWorkspace=true && needsWorkspaceSelection=true` | `needsWorkspaceSelection` | 跳 `workspace-entry` |
-| `callingPostLogin` | `hasWorkspace=false` | `workspaceMissing` | 显示无可用工作区 |
+| `callingPostLogin` | `entryType=workspace && hasWorkspace=true && needsWorkspaceSelection=false` | `postLoginSucceeded` | 跳 `/app` |
+| `callingPostLogin` | `entryType=workspace && hasWorkspace=true && needsWorkspaceSelection=true` | `needsWorkspaceSelection` | 跳 `/app` 并显示待补充选择提示 |
+| `callingPostLogin` | `hasWorkspace=false` | `workspaceMissing` | 显示无可用工作区，并给出联系管理员动作 |
 | `callingPostLogin` | 4xx/5xx | `postLoginFailed` | 显示明确错误和重试 |
 
 错误映射冻结：
 
 | code | 页面态 |
 | --- | --- |
-| `INVITATION_EMAIL_MISMATCH` | 当前登录邮箱与邀请邮箱不匹配 |
+| `INVITATION_EMAIL_MISMATCH` | 当前登录邮箱与邀请邮箱不匹配，提示切换账号后重试 |
 | `INVITATION_REVOKED` | 邀请已失效 |
 | `INVITATION_ALREADY_CONSUMED` | 邀请已被消费，但可继续登录收口 |
 | `INVITATION_EXPIRED` | 邀请已过期 |
@@ -377,6 +385,7 @@
 - `post-login` 由前端主动触发
 - 请求来源是真实登录会话，不能依赖前端伪造 `userId`
 - 即使页面刷新也允许重复调用，不应产生重复副作用
+- 普通用户登录成功后的首要目标是落到可继续使用的工作台
 
 ## 4.4 workspace-entry 状态机
 
@@ -387,22 +396,25 @@
 1. `loadingEntry`
 2. `readyToRedirect`
 3. `runtimeNotReady`
-4. `noWorkspace`
-5. `entryFailed`
+4. `runtimeMissing`
+5. `noWorkspace`
+6. `entryFailed`
 
 转移规则：
 
 | 当前状态 | 事件 | 下一状态 | UI 行为 |
 | --- | --- | --- | --- |
 | `loadingEntry` | `ready=true` | `readyToRedirect` | 立即跳转 `browserUrl` |
-| `loadingEntry` | `ready=false` 且有 runtime | `runtimeNotReady` | 展示 runtime 准备中 |
-| `loadingEntry` | `hasWorkspace=false` 或业务无工作区 | `noWorkspace` | 显示无工作区提示 |
+| `loadingEntry` | `ready=false` 且有 runtime | `runtimeNotReady` | 展示 runtime 准备中，并允许返回工作台 |
+| `loadingEntry` | `ready=false` 且尚未准备 runtime | `runtimeMissing` | 引导返回工作台启动或继续准备 |
+| `loadingEntry` | `hasWorkspace=false` 或业务无工作区 | `noWorkspace` | 显示无工作区提示与联系管理员动作 |
 | `loadingEntry` | 失败 | `entryFailed` | 展示重试 |
 
 冻结规则：
 
 - 此页不依赖 `runtime/status` 决定跳转
 - 最终跳转判断只看 `workspace-entry.ready`
+- 此页是短时等待页，不是普通用户默认首页
 
 ## 4.5 用户工作台状态机
 
@@ -436,6 +448,14 @@
 | `observedState=stopped` | `runtimeStopped` |
 | `observedState=deleted` | `runtimeStopped` |
 | `observedState=error` 或 `lastError!=null` | `runtimeError` |
+
+产品化展示要求：
+
+- `runtimeUnknown` 对用户显示为“未启动”
+- `runtimeCreating` 对用户显示为“准备中”
+- `runtimeRunning` 对用户显示为“可进入”
+- `runtimeError` 对用户显示为“启动失败”
+- 页面应始终给出下一步动作，而不是只展示状态字段
 
 动作互斥冻结：
 
@@ -606,7 +626,7 @@ type AppError = {
 | `INVITATION_ALREADY_CONSUMED` | invitation 已使用页 |
 | `INVITATION_REVOKED` | invitation 已撤销页 |
 | `INVITATION_EXPIRED` | invitation 已过期页 |
-| `INVITATION_EMAIL_MISMATCH` | post-login 邮箱不匹配页 |
+| `INVITATION_EMAIL_MISMATCH` | post-login 邮箱不匹配页，并提示切换账号 |
 | `INVITATION_WORKSPACE_INVALID` | 工作区无效页 |
 | `INVITATION_ERROR` | invitation 系统错误页 |
 | `USER_SYNC_ERROR` | 登录收口失败页 |
@@ -627,14 +647,15 @@ type AppError = {
 1. 登录后所有业务页先跑 `auth/me -> auth/access`
 2. invitation 链路固定为 `preview -> start -> Authentik -> post-login`
 3. `post-login` 是前端主动调用的 BFF 收口接口
-4. runtime 展示、任务进度、最终跳转是三种不同状态源
-5. `admin` 首页固定使用 `GET /api/v1/admin/home`
-6. `workspace-entry` 是唯一跳转工作区入口
-7. 用户工作台与管理后台均可按本文状态切片直接建模
-8. 错误码、字段名、状态枚举无需等待后端二次澄清
+4. 普通用户登录后默认进入 `/app`，而不是停留在中转页
+5. runtime 展示、任务进度、最终跳转是三种不同状态源
+6. `admin` 首页固定使用 `GET /api/v1/admin/home`
+7. `workspace-entry` 是唯一跳转工作区入口，但只承担最终跳转与短时等待
+8. 用户工作台与管理后台均可按本文状态切片直接建模
+9. 错误码、字段名、状态枚举无需等待后端二次澄清
 
 若后端实现与本文不一致，以后端三份冻结文档中的同名字段和错误码为准，但不得突破本文列出的前端边界。
 
-v0.1 前端
+v0.3 用户自然走完修订
 reno  
-2026-03-24
+2026-03-25 16:05

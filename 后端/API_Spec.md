@@ -8,7 +8,7 @@
 | 适用范围 | 用户侧 / 管理员侧 / 公开 invitation 入口 / 内部服务侧 / Runtime Manager 内部接口 |
 | 修订重点 | 冻结 invitation 生命周期、统一 token 语义、补齐 runtime V1 contract、收紧字段命名与跳转口径 |
 | 响应原则 | 所有响应均采用 JSON；字段名直接作为开发基线，不再自行改名 |
-| 当前版本 | v0.8-authentik-runtime-frozen |
+| 当前版本 | v0.10-user-path-frozen |
 
 ---
 
@@ -23,7 +23,7 @@
 | internal 鉴权 | internal API 必须通过服务间鉴权（如 mTLS 或 internal token），并且禁止公网访问 |
 | disabled 语义 | 除 `/api/v1/auth/me` 外，disabled 用户访问业务接口统一返回 `403 USER_DISABLED`；但 `/api/v1/auth/access` 永远返回 `200`，仅用于状态判断 |
 | workspace 访问 | `browserUrl` 仅是受保护入口地址；所有 workspace 子域名必须统一经过 Traefik + Authentik Forward Auth |
-| 跳转规则 | `admin` 登录后默认进入 `/admin`；`/admin` 使用独立首页摘要接口；非管理员用户只有在 `ready=true` 时才允许跳转到 `browserUrl`；知道 URL 不代表可访问 |
+| 跳转规则 | `admin` 登录后默认进入 `/admin`；普通用户登录后默认进入 `/app`；`/admin` 使用独立首页摘要接口；非管理员用户只有在 `ready=true` 时才允许跳转到 `browserUrl`；知道 URL 不代表可访问 |
 | 字段命名 | 以本文件“字段冻结清单”为唯一基线，禁止别名漂移 |
 
 ---
@@ -87,6 +87,7 @@
 - 校验发生在 `POST /api/v1/auth/post-login` 阶段，即已经拿到当前 `subjectId` 与认证邮箱之后
 - 当前认证邮箱必须匹配 `targetEmail`，否则返回 `INVITATION_EMAIL_MISMATCH`
 - 首版首次接入流程固定为：**用户通过 invitation 链接进入 enrollment flow，在 flow 内直接设置密码，并由 Authentik 自动登录**
+- 普通用户在登录收口成功后的默认落点应为 `/app`，由工作台承接首次使用与回访使用
 - “先 magic link 进入、之后再强制改密”不作为首版实现
 
 ### 3.5 平台密码禁区
@@ -265,13 +266,11 @@ GET `/api/v1/auth/options`
 
 POST `/api/v1/auth/post-login`
 
-**请求示例**：
+**请求说明**：
 
-```json
-{
-  "pendingInvitationSessionId": "pis_001"
-}
-```
+- 该接口不依赖前端传递 `pendingInvitationSessionId`
+- invitation 上下文由 cookie 或 server session 提供
+- 前端可发送空 body，或不带业务字段直接调用
 
 **成功响应示例**：
 
@@ -281,7 +280,10 @@ POST `/api/v1/auth/post-login`
   "userId": "u_001",
   "invitationApplied": true,
   "entryType": "workspace",
-  "redirectTo": "/workspace-entry",
+  "redirectTo": "/app",
+  "hasWorkspace": true,
+  "workspaceId": "ws_001",
+  "needsWorkspaceSelection": false,
   "result": "already_bound_or_consumed"
 }
 ```
@@ -289,8 +291,9 @@ POST `/api/v1/auth/post-login`
 跳转规则：
 
 - `appRole=admin` 时，`redirectTo` 返回 `/admin`
-- 非管理员用户时，`redirectTo` 返回 `/workspace-entry`
+- 非管理员用户时，`redirectTo` 返回 `/app`
 - `entryType` 至少支持 `admin_console | workspace`
+- `invitationApplied=true` 时，前端可在 `/app` 首屏强化“开始准备工作区”主 CTA
 
 ---
 
@@ -316,6 +319,11 @@ GET `/api/v1/public/invitations/{token}`
 }
 ```
 
+前端体验提示：
+
+- 若浏览器已有登录态，前端可额外展示当前账号信息，帮助用户确认是否与邀请邮箱一致
+- 前端不得据此自行做邮箱校验结论，正式校验仍在 `post-login`
+
 ### 6.2 启动 invitation 接入流程
 
 POST `/api/v1/public/invitations/{token}/start`
@@ -331,6 +339,11 @@ POST `/api/v1/public/invitations/{token}/start`
   "redirectUrl": "https://auth.example.com/if/flow/clawloops-invitation-enrollment/?itoken=xxxx"
 }
 ```
+
+前端体验提示：
+
+- 若用户在当前浏览器中可能已登录错误账号，前端应在跳转前明确提示切换账号风险
+- invitation 相关失败页应提供重试、返回入口或联系管理员等恢复动作
 
 ---
 
@@ -473,10 +486,30 @@ GET `/api/v1/workspace-entry`
 ```json
 {
   "ready": true,
+  "hasWorkspace": true,
   "runtimeId": "rt_001",
-  "browserUrl": "https://u-001.clawloops.example.com"
+  "browserUrl": "https://u-001.clawloops.example.com",
+  "reason": null
 }
 ```
+
+`ready=false` 示例：
+
+```json
+{
+  "ready": false,
+  "hasWorkspace": true,
+  "runtimeId": "rt_001",
+  "browserUrl": null,
+  "reason": "RUNTIME_PREPARING"
+}
+```
+
+体验语义：
+
+- 该接口只负责最终跳转裁决与短时等待提示
+- 普通用户登录后默认不应先落到此页，而应先进入 `/app`
+- `reason` 只用于前端文案和引导，不替代 `ready` 的跳转判断
 
 ---
 
@@ -815,7 +848,7 @@ POST `/internal/runtime-manager/containers/ensure-running`
 2. **Invitation 采用双层模型，但首版一律延迟创建 Authentik invitation**
 3. **`POST /api/v1/auth/post-login` 作为幂等收口入口**
 4. **`/auth/access` 永远返回 `200`，仅用于状态判断**
-5. **`admin` 登录后默认进入 `/admin`，并通过 `GET /api/v1/admin/home` 加载首页摘要；`workspace-entry` 是唯一工作区跳转入口，前端只在 `ready=true` 时跳转**
+5. **`admin` 登录后默认进入 `/admin`；普通用户登录后默认进入 `/app`；`workspace-entry` 是唯一工作区跳转入口，前端只在 `ready=true` 时跳转**
 6. **runtime 删除改为 `POST /api/v1/users/me/runtime/delete`，不再依赖 DELETE body**
 7. **所有 workspace 子域名必须统一经过 Traefik + Authentik Forward Auth**
 8. **RuntimeManager internal 接口同步执行，`taskId` 只存在于 Orchestrator 对外层**
@@ -823,6 +856,6 @@ POST `/internal/runtime-manager/containers/ensure-running`
 
 ---
 
-v0.9-新增管理页面
+v0.10-用户自然走完修订
 reno  
-2026-03-25 14:47
+2026-03-25 16:05

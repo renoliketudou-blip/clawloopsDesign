@@ -35,10 +35,12 @@
 
 1. 页面可见状态以 BFF 返回为准，不靠前端推理补业务结论。
 2. `post-login` 与 `start` 视为幂等接口，前端可以安全重试。
-3. runtime 动作先拿 `taskId`，再轮询任务，再刷新 runtime 状态。
-4. workspace 跳转只信 `GET /api/v1/workspace-entry`。
-5. `browserUrl` 不等于可访问，`ready=true` 才允许跳转。
-6. `admin` 首页只信 `GET /api/v1/admin/home`。
+3. 非管理员用户的默认控制面是 `/app`，`/workspace-entry` 只负责最终跳转。
+4. runtime 动作先拿 `taskId`，再轮询任务，再刷新 runtime 状态。
+5. workspace 跳转只信 `GET /api/v1/workspace-entry`。
+6. `browserUrl` 不等于可访问，`ready=true` 才允许跳转。
+7. 邀请、登录、runtime 等失败页必须给出明确下一步，不允许只停留在说明页。
+8. `admin` 首页只信 `GET /api/v1/admin/home`。
 
 ---
 
@@ -81,7 +83,7 @@
 - 登录方式只展示 `local_password`
 - 登录入口文案以 `/auth/options.methods[0].label` 为准（当前固定为 `账号密码登录`）
 - 不展示 Google、GitHub、企业 SSO 等入口
-- 若 `/auth/me` 已表明已登录，则按角色跳 `/admin` 或 `/workspace-entry`
+- 若 `/auth/me` 已表明已登录，则按角色跳 `/admin` 或 `/app`
 
 前端职责：
 
@@ -94,7 +96,8 @@
 
 1. 解析路由参数 `token`
 2. `GET /api/v1/public/invitations/{token}`
-3. 根据返回渲染有效页或失效页
+3. 可选：`GET /api/v1/auth/me`，用于识别当前浏览器是否已有登录态
+4. 根据返回渲染有效页或失效页
 
 ### 点击“继续接入”流程
 
@@ -104,6 +107,12 @@
    - `pendingInvitationSession.ttlSeconds`
    - `redirectUrl`
 3. 浏览器整页跳转 `redirectUrl`
+
+页面提示要求：
+
+- 若当前浏览器已有登录态，页面应显式展示“当前登录账号”和“邀请目标邮箱”
+- 若两者看起来不一致，前端不做业务校验结论，但必须提示用户先切换账号再继续
+- invitation 失败页必须提供回登录入口、联系管理员或稍后重试等可恢复动作
 
 ### 失败收口
 
@@ -144,18 +153,24 @@
 | 返回结果 | 下一步 |
 | --- | --- |
 | `entryType=admin_console` | 跳 `/admin` |
-| `entryType=workspace` 且 `hasWorkspace=true` 且 `needsWorkspaceSelection=false` | 跳 `/workspace-entry` |
-| `entryType=workspace` 且 `hasWorkspace=true` 且 `needsWorkspaceSelection=true` | 跳 `/workspace-entry` |
-| `hasWorkspace=false` | 留在控制面，显示“暂无工作区” |
+| `entryType=workspace` 且 `hasWorkspace=true` 且 `needsWorkspaceSelection=false` | 跳 `/app` |
+| `entryType=workspace` 且 `hasWorkspace=true` 且 `needsWorkspaceSelection=true` | 跳 `/app` 并显示待补充选择提示 |
+| `hasWorkspace=false` | 进入无工作区页，并给出联系管理员或返回入口动作 |
+
+用户体验规则：
+
+- `post-login` 对普通用户的目标是把人送到“可继续操作的页面”，而不是直接送到中转页
+- 若 `invitationApplied=true`，`/app` 首屏应优先展示“开始准备工作区”主 CTA 或自动承接准备态
+- 邮箱不匹配、邀请失效、无工作区都必须提供明确下一步
 
 ### 错误处理
 
 | code | 页面行为 |
 | --- | --- |
-| `INVITATION_EMAIL_MISMATCH` | 显示邮箱不匹配，不自动重试 |
-| `INVITATION_REVOKED` | 显示邀请失效 |
-| `INVITATION_EXPIRED` | 显示邀请过期 |
-| `INVITATION_WORKSPACE_INVALID` | 显示目标工作区无效 |
+| `INVITATION_EMAIL_MISMATCH` | 显示账号与邀请不匹配，并提示切换账号后重试 |
+| `INVITATION_REVOKED` | 显示邀请失效，并提供联系管理员动作 |
+| `INVITATION_EXPIRED` | 显示邀请过期，并提供联系管理员动作 |
+| `INVITATION_WORKSPACE_INVALID` | 显示目标工作区无效，并提供联系管理员动作 |
 | `USER_SYNC_ERROR` | 显示登录收口失败，可重试 |
 | `USER_DISABLED` | 显示账号已禁用 |
 | `INVITATION_ERROR` | 显示系统错误，可重试 |
@@ -189,6 +204,13 @@
 | runtime 卡片 | `/users/me/runtime/status` |
 | 模型只读列表 | `/models` |
 
+工作台交互要求：
+
+- 首次接入用户与回访用户共用 `/app`，但首屏提示不同
+- 首次接入且 runtime 尚未就绪时，主 CTA 应为“开始准备工作区”或“继续准备工作区”
+- 回访用户优先看到最近状态和“进入工作区”入口
+- runtime 状态文案以“未启动 / 准备中 / 可进入 / 启动失败”为主，不直接暴露底层实现术语
+
 ### 点击“启动 runtime”
 
 1. `POST /api/v1/users/me/runtime/start`
@@ -207,6 +229,12 @@
 | `succeeded` | 刷新状态，若 `ready=true` 则允许进入工作区 |
 | `failed` | 刷新状态并展示 `lastError` |
 | `canceled` | 刷新状态并解除按钮禁用 |
+
+等待体验要求：
+
+- 页面要明确提示“准备仍在继续，可稍后回来”
+- 轮询中允许用户离开当前页，返回工作台后继续根据最新状态渲染
+- 失败展示应优先给出产品化文案，再保留错误码用于排障
 
 ### 点击“停止 runtime”
 
@@ -241,7 +269,7 @@
 页面目标：
 
 - 做最终跳转裁决
-- 承接 post-login 或工作台跳转
+- 承接“立即进入工作区”动作或短时等待
 
 调用顺序：
 
@@ -254,9 +282,10 @@
 | 条件 | 页面行为 |
 | --- | --- |
 | `ready=true` | 立即跳工作区子域 |
-| `ready=false` 且 runtime 存在 | 停留在本页，提示“环境准备中” |
+| `ready=false` 且 runtime 存在 | 停留在本页，提示“环境准备中”，并允许返回工作台 |
+| `ready=false` 且 runtime 尚未准备 | 引导返回 `/app` 启动或继续准备 |
 | `USER_DISABLED` | 进入禁用页 |
-| 无 workspace | 进入无工作区页 |
+| 无 workspace | 进入无工作区页，并提供联系管理员动作 |
 
 ### 轮询建议
 
@@ -264,10 +293,12 @@
 
 1. 首次调 `/workspace-entry`
 2. 若 `ready=false`，每 2 秒重试一次
-3. 最长 60 秒
-4. 超时后改为手动刷新
+3. 60 秒后改为每 3 秒重试一次
+4. 最长 180 秒
+5. 超时后保留手动刷新，并允许用户返回 `/app` 稍后再试
 
 此轮询只允许发生在 `/workspace-entry` 页，不建议在任意页面后台常驻。
+此页应被设计成短时等待页，而不是普通用户登录后的默认首页。
 
 ---
 
@@ -453,8 +484,9 @@
 
 1. 首次加载立即请求
 2. `ready=false` 时每 2 秒请求
-3. 最长 60 秒
-4. 超时后改为手动刷新
+3. 60 秒后每 3 秒请求
+4. 最长 180 秒
+5. 超时后改为手动刷新，并提示返回工作台
 
 ---
 
@@ -476,14 +508,15 @@
 前端可以按本文直接冻结 BFF 编排：
 
 1. invitation 链路固定为 `preview -> start -> redirect -> post-login`
-2. 用户工作台固定为 `me -> access -> runtime/status -> models`
-3. runtime 动作固定为 `action -> task polling -> runtime/status refresh`
-4. workspace 跳转固定为 `workspace-entry -> browserUrl`
-5. 管理后台首页固定为 `/admin -> /api/v1/admin/home`
-6. 管理后台其余页面均采用“提交后回刷列表/详情”的简单编排
-7. 前端无需等待 internal API 细节即可并行开发
+2. 普通用户登录后默认落到 `/app`，由工作台承接首次使用与回访使用
+3. 用户工作台固定为 `me -> access -> runtime/status -> models`
+4. runtime 动作固定为 `action -> task polling -> runtime/status refresh`
+5. workspace 跳转固定为 `workspace-entry -> browserUrl`
+6. 管理后台首页固定为 `/admin -> /api/v1/admin/home`
+7. 管理后台其余页面均采用“提交后回刷列表/详情”的简单编排
+8. 前端无需等待 internal API 细节即可并行开发
 
 
-v0.2 新增admin页面
+v0.3 用户自然走完修订
 reno  
-2026-03-25 14:47
+2026-03-25 16:05

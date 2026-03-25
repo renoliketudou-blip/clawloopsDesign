@@ -8,7 +8,7 @@
 | 适用范围 | 单机部署、多用户访问、容器级隔离、统一模型网关、官方 Authentik 身份接入 |
 | 本版重点 | 冻结管理员初始化口径、邀请制接入规则、首登密码流程、Traefik + Outpost 前置鉴权，以及 runtime V1 contract |
 | 关联文档 | 《MVP 开发基线总契约》《MVP 统一总接口》《RuntimeManager 开发契约》《Authentik 实施文档》 |
-| 当前版本 | v0.8-authentik-runtime-frozen |
+| 当前版本 | v0.10-user-path-frozen |
 
 ---
 
@@ -396,8 +396,8 @@ ClawLoops 明确禁止：
 
 - `appRole=admin` 的用户登录后默认进入 `/admin`
 - 平台管理员首页不依赖 workspace membership
-- 非管理员用户登录后再进入 `workspace-entry` 流程
-- `workspace-entry` 只负责普通用户的工作区跳转，不承担管理员首页决策
+- 非管理员用户登录后默认进入 `/app`
+- `workspace-entry` 只负责普通用户主动进入工作区时的最终跳转与短时等待，不承担默认首页决策
 
 ### 10.5 管理后台首页最小能力
 
@@ -626,7 +626,7 @@ networks:
 - **Traefik + Outpost 负责统一前置鉴权**
 - **Invitation 用双层模型把业务 token 与身份 enrollment 解耦，并在首版采用延迟创建**
 - **首版只开本地账号密码，后续再逐步加外部身份源**
-- **`admin` 登录后默认进入 `/admin`；非管理员用户的工作区跳转统一收敛到 `workspace-entry`，且前端只在 `ready=true` 时跳转**
+- **`admin` 登录后默认进入 `/admin`；普通用户登录后默认进入 `/app`；`workspace-entry` 只负责最终跳转与短时等待，且前端只在 `ready=true` 时跳转**
 - **Orchestrator 负责对外异步编排，RuntimeManager 负责对内同步执行**
 - **runtime V1 统一固定为 `clawloops_shared + 18789 + rt-<runtimeId> + compat 必填`**
 
@@ -634,6 +634,6 @@ networks:
 
 ---
 
-v0.9-新增管理页面
+v0.10-用户自然走完修订
 reno  
-2026-03-25 14:47
+2026-03-25 16:05
