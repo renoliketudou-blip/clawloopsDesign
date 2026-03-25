@@ -88,6 +88,8 @@
 - 当前认证邮箱必须匹配 `targetEmail`，否则返回 `INVITATION_EMAIL_MISMATCH`
 - 首版首次接入流程固定为：**用户通过 invitation 链接进入 enrollment flow，在 flow 内直接设置密码，并由 Authentik 自动登录**
 - 普通用户在登录收口成功后的默认落点应为 `/app`，由工作台承接首次使用与回访使用
+- 首次接入成功后，`/app` 首屏必须先给出“已成功加入目标 workspace”的强确认，再给出单一主 CTA“开始准备工作区”或“继续准备工作区”
+- 首版普通用户只会绑定 0 或 1 个 workspace，不存在前端 workspace 选择分支
 - “先 magic link 进入、之后再强制改密”不作为首版实现
 
 ### 3.5 平台密码禁区
@@ -283,7 +285,6 @@ POST `/api/v1/auth/post-login`
   "redirectTo": "/app",
   "hasWorkspace": true,
   "workspaceId": "ws_001",
-  "needsWorkspaceSelection": false,
   "result": "already_bound_or_consumed"
 }
 ```
@@ -293,7 +294,7 @@ POST `/api/v1/auth/post-login`
 - `appRole=admin` 时，`redirectTo` 返回 `/admin`
 - 非管理员用户时，`redirectTo` 返回 `/app`
 - `entryType` 至少支持 `admin_console | workspace`
-- `invitationApplied=true` 时，前端可在 `/app` 首屏强化“开始准备工作区”主 CTA
+- `invitationApplied=true` 时，前端应在 `/app` 首屏先展示接入成功确认，再展示单一主 CTA“开始准备工作区”或“继续准备工作区”
 
 ---
 
@@ -321,7 +322,12 @@ GET `/api/v1/public/invitations/{token}`
 
 前端体验提示：
 
-- 若浏览器已有登录态，前端可额外展示当前账号信息，帮助用户确认是否与邀请邮箱一致
+- 若浏览器已有登录态，前端应同时展示当前账号信息与邀请目标邮箱
+- 若两者看起来不一致，前端不得直接判定业务失败，但必须把它做成可操作流程，而不是只做提示文案
+- 错账号场景至少提供：
+  - `切换账号后继续接入`
+  - `返回登录入口`
+  - `联系管理员`
 - 前端不得据此自行做邮箱校验结论，正式校验仍在 `post-login`
 
 ### 6.2 启动 invitation 接入流程
@@ -342,7 +348,9 @@ POST `/api/v1/public/invitations/{token}/start`
 
 前端体验提示：
 
-- 若用户在当前浏览器中可能已登录错误账号，前端应在跳转前明确提示切换账号风险
+- 若用户在当前浏览器中可能已登录错误账号，前端应在跳转前展示账号不匹配风险卡片，并提供明确动作，而不是只给提示
+- 主动作应为 `切换账号后继续接入`
+- 次动作至少包含 `返回登录入口`
 - invitation 相关失败页应提供重试、返回入口或联系管理员等恢复动作
 
 ---

@@ -26,6 +26,7 @@
 | 密码归属 | 统一交给 Authentik 管理 |
 | runtime V1 | 固定镜像、固定端口、固定网络、固定 alias、`compat` 必填 |
 | 用户体验基线 | 普通用户登录后默认进入 `/app`，由工作台承接首次使用与回访使用 |
+| workspace 关系基线 | 普通用户首版只会绑定 0 或 1 个 workspace，不存在前端 workspace 选择分支 |
 | 首版非目标 | 第三方登录、企业目录同步、复杂审批流、复杂共享空间权限、复杂费用管理 |
 
 ---
@@ -723,8 +724,7 @@ IF 有 pending invitation:
   "entryType": "admin_console",
   "redirectTo": "/admin",
   "hasWorkspace": false,
-  "workspaceId": null,
-  "needsWorkspaceSelection": false
+  "workspaceId": null
 }
 ```
 
@@ -735,8 +735,7 @@ IF 有 pending invitation:
   "entryType": "workspace",
   "redirectTo": "/app",
   "hasWorkspace": true,
-  "workspaceId": "ws_xxx",
-  "needsWorkspaceSelection": false
+  "workspaceId": "ws_xxx"
 }
 ```
 
@@ -781,8 +780,8 @@ X-authentik-username
 
 ### 关系定义
 
-- 一个 user：
-  - 可以属于多个 workspace
+- 一个普通 user：
+  - 首版只允许属于 0 或 1 个 workspace
 - 一个 workspace：
   - 可以有多个 user
 
@@ -793,10 +792,7 @@ IF appRole == admin:
     进入 /admin
 
 IF appRole != admin AND membership == 1:
-    自动进入 workspace
-
-IF appRole != admin AND membership > 1:
-    进入 /workspace-entry
+    进入 /app
 
 IF appRole != admin AND membership == 0:
     hasWorkspace = false

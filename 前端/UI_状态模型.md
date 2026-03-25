@@ -122,7 +122,8 @@
 - `status` 只认 `pending | consumed | revoked`
 - `expired` 不在字段中单独出现，来源于接口错误码
 - 预览页只展示，不做业务消费
-- 若当前浏览器已有登录态，可额外展示当前账号提示，帮助用户在继续前确认账号是否正确
+- 若当前浏览器已有登录态，页面必须同时展示当前账号与邀请目标邮箱
+- 若两者看起来不一致，前端必须把它做成可操作流程，至少提供“切换账号后继续接入”“返回登录入口”“联系管理员”
 
 ### 3.4 PostLoginResult
 
@@ -133,8 +134,7 @@
   "entryType": "workspace",
   "redirectTo": "/app",
   "hasWorkspace": true,
-  "workspaceId": "ws_xxx",
-  "needsWorkspaceSelection": false
+  "workspaceId": "ws_xxx"
 }
 ```
 
@@ -158,11 +158,10 @@
   - `redirectTo`
   - `hasWorkspace`
   - `workspaceId | null`
-  - `needsWorkspaceSelection`
   - `invitationApplied | false`
   - `result | null`
 - 非管理员用户的默认 `redirectTo` 应为 `/app`
-- `invitationApplied=true` 时，前端应用可用该字段决定是否强化“开始准备工作区”主 CTA
+- `invitationApplied=true` 时，前端应用必须在 `/app` 首屏先展示“已成功加入 workspace”的强确认，再展示单一主 CTA“开始准备工作区”或“继续准备工作区”
 
 管理员示例：
 
@@ -171,8 +170,7 @@
   "entryType": "admin_console",
   "redirectTo": "/admin",
   "hasWorkspace": false,
-  "workspaceId": null,
-  "needsWorkspaceSelection": false
+  "workspaceId": null
 }
 ```
 
@@ -218,6 +216,7 @@
 - `action` 至少支持 `ensure_running | stop | delete`
 - `status` 至少支持 `pending | running | succeeded | failed | canceled`
 - 任务页或弹层只能展示进度，不直接决定是否跳转 workspace
+- 前端应基于 `task.status`、`observedState`、`ready` 推导产品化进度步骤，而不是只暴露原始字段
 
 ### 3.7 AdminHome
 
@@ -311,18 +310,21 @@
 
 1. `loadingPreview`
 2. `previewValid`
-3. `previewInvalid`
-4. `starting`
-5. `redirectingToAuthentik`
-6. `startFailed`
+3. `previewAccountMismatchRisk`
+4. `previewInvalid`
+5. `starting`
+6. `redirectingToAuthentik`
+7. `startFailed`
 
 转移规则：
 
 | 当前状态 | 事件 | 下一状态 | UI 行为 |
 | --- | --- | --- | --- |
 | `loadingPreview` | 预览成功且 `valid=true` | `previewValid` | 展示邮箱、workspace、角色、有效期 |
+| `previewValid` | 当前浏览器已有登录态且看起来与邀请邮箱不一致 | `previewAccountMismatchRisk` | 展示当前账号、邀请邮箱与“切换账号后继续接入”主 CTA |
 | `loadingPreview` | 404/409/410/422 | `previewInvalid` | 渲染不可继续页面 |
 | `previewValid` | 点击继续接入 | `starting` | 按钮禁用，显示提交中 |
+| `previewAccountMismatchRisk` | 用户选择返回登录入口或切换账号 | `previewValid` | 切换账号后重新回到 invitation 预览页 |
 | `starting` | 成功返回 `redirectUrl` | `redirectingToAuthentik` | 浏览器整页跳转 |
 | `starting` | 失败 | `startFailed` | 显示可重试错误 |
 
@@ -353,8 +355,7 @@
 2. `callingPostLogin`
 3. `postLoginSucceeded`
 4. `workspaceMissing`
-5. `needsWorkspaceSelection`
-6. `postLoginFailed`
+5. `postLoginFailed`
 
 转移规则：
 
@@ -362,8 +363,7 @@
 | --- | --- | --- | --- |
 | `initializing` | 拿到登录态 | `callingPostLogin` | 显示“正在完成登录” |
 | `callingPostLogin` | `entryType=admin_console` | `postLoginSucceeded` | 跳 `/admin` |
-| `callingPostLogin` | `entryType=workspace && hasWorkspace=true && needsWorkspaceSelection=false` | `postLoginSucceeded` | 跳 `/app` |
-| `callingPostLogin` | `entryType=workspace && hasWorkspace=true && needsWorkspaceSelection=true` | `needsWorkspaceSelection` | 跳 `/app` 并显示待补充选择提示 |
+| `callingPostLogin` | `entryType=workspace && hasWorkspace=true` | `postLoginSucceeded` | 跳 `/app`，并以首登成功确认态承接 |
 | `callingPostLogin` | `hasWorkspace=false` | `workspaceMissing` | 显示无可用工作区，并给出联系管理员动作 |
 | `callingPostLogin` | 4xx/5xx | `postLoginFailed` | 显示明确错误和重试 |
 
@@ -371,7 +371,7 @@
 
 | code | 页面态 |
 | --- | --- |
-| `INVITATION_EMAIL_MISMATCH` | 当前登录邮箱与邀请邮箱不匹配，提示切换账号后重试 |
+| `INVITATION_EMAIL_MISMATCH` | 当前登录邮箱与邀请邮箱不匹配，提供“切换账号后继续接入”“返回登录入口”动作 |
 | `INVITATION_REVOKED` | 邀请已失效 |
 | `INVITATION_ALREADY_CONSUMED` | 邀请已被消费，但可继续登录收口 |
 | `INVITATION_EXPIRED` | 邀请已过期 |
@@ -386,6 +386,7 @@
 - 请求来源是真实登录会话，不能依赖前端伪造 `userId`
 - 即使页面刷新也允许重复调用，不应产生重复副作用
 - 普通用户登录成功后的首要目标是落到可继续使用的工作台
+- 首次接入成功后，`/app` 首屏必须优先渲染“已成功加入 workspace”的确认态，而不是直接退化成普通回访工作台
 
 ## 4.4 workspace-entry 状态机
 
@@ -405,7 +406,7 @@
 | 当前状态 | 事件 | 下一状态 | UI 行为 |
 | --- | --- | --- | --- |
 | `loadingEntry` | `ready=true` | `readyToRedirect` | 立即跳转 `browserUrl` |
-| `loadingEntry` | `ready=false` 且有 runtime | `runtimeNotReady` | 展示 runtime 准备中，并允许返回工作台 |
+| `loadingEntry` | `ready=false` 且有 runtime | `runtimeNotReady` | 展示阶段化准备进度，并允许返回工作台 |
 | `loadingEntry` | `ready=false` 且尚未准备 runtime | `runtimeMissing` | 引导返回工作台启动或继续准备 |
 | `loadingEntry` | `hasWorkspace=false` 或业务无工作区 | `noWorkspace` | 显示无工作区提示与联系管理员动作 |
 | `loadingEntry` | 失败 | `entryFailed` | 展示重试 |
@@ -437,6 +438,15 @@
 5. `runtimeError`
 6. `runtimeDeleting`
 
+第三层为准备进度视图：
+
+1. `progressNotStarted`
+2. `progressProvisioning`
+3. `progressStartingService`
+4. `progressVerifyingEntry`
+5. `progressReady`
+6. `progressFailed`
+
 映射规则：
 
 | 字段组合 | runtime UI 状态 |
@@ -456,6 +466,15 @@
 - `runtimeRunning` 对用户显示为“可进入”
 - `runtimeError` 对用户显示为“启动失败”
 - 页面应始终给出下一步动作，而不是只展示状态字段
+- runtime 准备态必须展示阶段化进度，而不是只显示一个抽象状态
+- 建议固定 4 步文案：
+  - 已接入 workspace
+  - 正在创建运行环境
+  - 正在启动服务
+  - 正在验证工作区入口
+- 当前步骤必须高亮，已完成步骤必须保留
+- 用户必须知道此时是否可以离开当前页，以及回来后会从最新进度继续显示
+- 超时后必须切换到可恢复状态，至少提供“继续等待”“返回工作台稍后再试”“重新准备工作区”
 
 动作互斥冻结：
 
@@ -626,7 +645,7 @@ type AppError = {
 | `INVITATION_ALREADY_CONSUMED` | invitation 已使用页 |
 | `INVITATION_REVOKED` | invitation 已撤销页 |
 | `INVITATION_EXPIRED` | invitation 已过期页 |
-| `INVITATION_EMAIL_MISMATCH` | post-login 邮箱不匹配页，并提示切换账号 |
+| `INVITATION_EMAIL_MISMATCH` | post-login 邮箱不匹配页，并提供“切换账号后继续接入”“返回登录入口”动作 |
 | `INVITATION_WORKSPACE_INVALID` | 工作区无效页 |
 | `INVITATION_ERROR` | invitation 系统错误页 |
 | `USER_SYNC_ERROR` | 登录收口失败页 |
