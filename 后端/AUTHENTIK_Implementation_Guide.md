@@ -1,4 +1,4 @@
-# ClawLoops × 官方 Authentik 实施文档（运行时冻结修订）
+# ClawLoops × 官方 Authentik 实施文档（组映射修订）
 
 这份文档是给你直接在 Cursor 里开干用的，不再停留在“讨论方案”，而是明确到：
 
@@ -21,7 +21,7 @@
 2. 把 invitation 从一句需求升级成完整的业务对象与时序
 3. 把“首版只开本地账号密码”写成硬规则
 4. 把“密码管理全部交给 Authentik”写进架构、契约、接口三份文档
-5. 把管理员初始账号口径统一冻结为官方默认 `akadmin`
+5. 把应用管理员角色来源统一冻结为 Authentik Groups 映射
 6. 把 invitation 生命周期统一冻结为“双层模型 + 延迟创建”
 7. 把 `post-login`、`start` 的幂等性和事务边界写清楚
 8. 把 workspace 子域名保护、`ready=true` 跳转规则、字段命名冻结写成强规则
@@ -44,23 +44,31 @@
 
 不能直接只靠 Authentik 独立解决、建议由 ClawLoops 负责的部分：
 
-- invitation 绑定 `workspace / role`
+- invitation 绑定 `workspace / workspaceRole`
 - invitation 的业务有效性与是否已消费
 - 用户第一次进来后该进哪个 workspace
 - runtime 是否允许启动
 - disabled / quota / runtime 资源治理
 - `volumeId -> host path` 解析与 runtime drift 重建决策
 
+可以直接利用、并且本次改为冻结设计的部分：
+
+- Authentik Group 作为应用级角色来源
+- 例如 `clawloops-admins -> admin`
+- 后端读取 `X-Authentik-Groups` 后映射 `appRole / isAdmin`
+
 ### 1.3 首版推荐方案
 
-推荐的首版不是“平台自己写认证”，也不是“把业务全塞进 Authentik”，而是下面这套：
+推荐的首版不是“平台自己写认证”，也不是“把所有业务角色都塞进 Authentik”，而是下面这套：
 
 - Authentik 负责身份、密码、会话、enrollment flow
-- ClawLoops 负责 `workspace / role / invitation / runtime` 业务真相
+- Authentik Groups 负责应用级角色输入
+- ClawLoops 负责 `workspace membership / invitation / runtime` 业务真相
 - Traefik + Outpost 负责前置鉴权
 - 首版只启用本地账号密码
 - 邀请链接走“平台 token + enrollment flow”模式
 - 身份侧 invitation 在 `start` 阶段延迟创建，不在管理员创建 invitation 时预生成
+- 后端读取 `X-Authentik-Groups`，命中 `clawloops-admins` 时把应用内角色设为 `admin`
 - Orchestrator 对用户侧暴露异步任务
 - RuntimeManager 对内部执行层暴露同步接口
 
@@ -89,7 +97,7 @@
 3. 这个 invitation 链接本身就是“首次免密码入口”
 4. 在 Authentik 的 enrollment flow 里，用户填写资料并设置密码
 5. 完成后由 Authentik 自动登录
-6. ClawLoops 根据 invitation 完成 `workspace / role` 绑定
+6. ClawLoops 根据 invitation 完成 `workspace / workspaceRole` 绑定
 
 ---
 
@@ -101,6 +109,7 @@
 Docker 分容器部署
 平台运行链路统一使用 clawloops_shared
 首个初始化管理员按默认 akadmin
+应用管理员角色由 Authentik Groups 映射
 只开本地账号密码
 后续再加微信/飞书/钉钉/Google/GitHub/企业 SSO
 RuntimeManager internal API 同步执行
@@ -245,11 +254,13 @@ networks:
 ### 7.3 你在 Cursor 里实现时对应的系统边界
 
 - Authentik 决定“这个人登录成功没有”
+- Authentik Groups 提供“这个人具备什么应用级角色”的输入
 - ClawLoops 决定“这个人虽然登录了，但是否可访问业务”
 
 也就是说：
 
 - 认证成功 ≠ 业务允许
+- `appRole` 可由 `X-Authentik-Groups` 映射得出
 - ClawLoops 还要检查 `user.status / workspace membership / runtime rules`
 
 ---
@@ -283,7 +294,7 @@ updated_at
 因为真正要绑定的是：
 
 - `workspaceId`
-- `role`
+- `workspaceRole`
 - 业务用户状态
 
 这些不是身份系统真相，而是平台真相。
@@ -355,11 +366,12 @@ Enrollment Flow 建议顺序：
 1. 用 Authentik 会话识别当前用户
 2. 调 `/internal/users/sync`
 3. 执行邮箱强校验
-4. 检查 pending invitation
-5. 绑定 workspace / role
-6. 标记 invitation consumed
-7. 清理 cookie / session
-8. 跳工作台
+4. 从 `X-Authentik-Groups` 映射 `appRole`
+5. 检查 pending invitation
+6. 绑定 workspace / workspaceRole
+7. 标记 invitation consumed
+8. 清理 cookie / session
+9. 跳工作台
 
 ### 8.5 `start` 与 `post-login` 的关键规则
 
@@ -414,6 +426,7 @@ Enrollment Flow 建议顺序：
 - 本地账号目录
 - 密码存储与校验
 - 登录会话
+- 用户组真相
 - enrollment flow
 - invitation stage
 - user settings / recovery / reset password
@@ -422,8 +435,9 @@ Enrollment Flow 建议顺序：
 ### 10.2 ClawLoops 负责
 
 - 用户业务状态（active / disabled）
+- 应用级角色映射策略（例如 `clawloops-admins -> admin`）
 - invitation 的业务有效性
-- workspace / role 绑定
+- workspace / workspaceRole 绑定
 - runtime 资源真相
 - quota / usage / 模型治理
 - 后台 invitation 管理
@@ -448,7 +462,8 @@ Enrollment Flow 建议顺序：
 
 不要让：
 
-- Authentik 成为 `workspace / role` 的唯一真相库
+- Authentik 成为 `workspace membership / workspaceRole` 的唯一真相库
+- 误以为“应用级角色来自 group 映射”就等于“workspace 权限也应该全部来自 group”
 - RuntimeManager 成为外层任务系统
 - RM 自动解析 secret 文件并注入 env
 - RM 自动 stop+delete+recreate 以“修复” drift
@@ -487,6 +502,7 @@ http:
           - X-authentik-email
           - X-authentik-name
           - X-authentik-uid
+          - X-Authentik-Groups
 ```
 
 然后平台主域名和所有 workspace 子域名都挂这个 middleware。
@@ -499,8 +515,16 @@ http:
 - `email`
 - `username`
 - `name`
+- `groups`
+- `appRole`
 
 再触发用户同步与业务校验。
+
+推荐规则：
+
+- 命中 `X-Authentik-Groups` 中的 `clawloops-admins`，则 `appRole=admin`
+- 未命中时默认 `appRole=user`
+- `isAdmin = appRole === 'admin'`
 
 ### 11.5 安全硬规则
 
@@ -520,7 +544,7 @@ interface Invitation {
   inviteTokenHash: string
   targetEmail: string
   workspaceId: string
-  role: string
+  workspaceRole: string
   status: 'pending' | 'consumed' | 'revoked'
   expiresAt: string
   consumedAt?: string | null
@@ -536,7 +560,7 @@ interface Invitation {
 interface WorkspaceMembership {
   workspaceId: string
   userId: string
-  role: string
+  workspaceRole: string
   status: 'active' | 'disabled'
   source: 'invitation' | 'manual' | 'sync'
 }
@@ -550,6 +574,9 @@ interface AuthContext {
   email: string
   username?: string | null
   name?: string | null
+  groups?: string[]
+  appRole: 'admin' | 'user'
+  isAdmin: boolean
   provider: 'authentik'
   method: 'local_password'
 }
@@ -676,6 +703,7 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 2. `/api/v1/auth/me`
 3. `POST /api/v1/auth/post-login`
 4. `internal/users/sync`
+5. `X-Authentik-Groups -> appRole/isAdmin` 映射
 
 ### 14.4 第四组：invitation 主链路
 
@@ -713,18 +741,19 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 
 ### 14.7 第七组：联调验收
 
-验收 10 条：
+验收 11 条：
 
 1. 首次管理员能初始化成功
 2. 登录页只有本地密码
 3. invitation 可创建
 4. invitation 链接一次性有效
-5. 用户完成接入后能绑定 workspace / role
+5. 用户完成接入后能绑定 workspace / workspaceRole
 6. `start` 与 `post-login` 可安全重复调用
 7. workspace 子域名会被 Authentik 保护
 8. 前端只在 `ready=true` 时跳转 `browserUrl`
 9. RM internal API 不再接收 `imageRef`
 10. runtime 统一跑在 `clawloops_shared + 18789 + rt-<runtimeId>`
+11. `clawloops-admins` 组成员登录后得到 `appRole=admin`
 
 ---
 
@@ -740,9 +769,10 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 - Docker 分容器部署
 - 平台运行链路统一使用 clawloops_shared
 - 首个初始化管理员按默认 akadmin
+- 应用管理员角色通过 Authentik Groups 映射
 - 首版只开本地账号密码
 - 邀请制接入
-- 平台保持 workspace/role 业务真相
+- 平台保持 workspace membership 业务真相
 - 所有 workspace 子域名必须经过 Traefik + Authentik Forward Auth
 - Orchestrator 对外异步返回 taskId
 - RuntimeManager internal API 同步执行
@@ -758,18 +788,19 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 8. 新增 /internal/invitations 与 /internal/invitations/{id}/consume
 9. 保持现有 runtime 对外接口主体不变，但删除改为 POST /runtime/delete
 10. 把 subjectId/authProvider/authMethod 接入用户同步
-11. 在 Traefik 上为平台域名和 workspace 子域名挂 Authentik forward auth
-12. RuntimeManager V1 请求体删除 imageRef，compat 必填
-13. 固定 runtime 网络为 clawloops_shared，固定 internalEndpoint 为 http://rt-<runtimeId>:18789
-14. 增加 RUNTIME_CONTRACT_DRIFT / RUNTIME_START_FAILED / RUNTIME_STOP_FAILED / RUNTIME_DELETE_FAILED
-15. 平台禁止保存密码、禁止实现独立改密 API
-16. workspace-entry 是唯一跳转入口，前端只在 ready=true 时跳转
+11. 解析 `X-Authentik-Groups` 并实现 `clawloops-admins -> admin`
+12. 在 Traefik 上为平台域名和 workspace 子域名挂 Authentik forward auth
+13. RuntimeManager V1 请求体删除 imageRef，compat 必填
+14. 固定 runtime 网络为 clawloops_shared，固定 internalEndpoint 为 http://rt-<runtimeId>:18789
+15. 增加 RUNTIME_CONTRACT_DRIFT / RUNTIME_START_FAILED / RUNTIME_STOP_FAILED / RUNTIME_DELETE_FAILED
+16. 平台禁止保存密码、禁止实现独立改密 API
+17. workspace-entry 是唯一跳转入口，前端只在 ready=true 时跳转
 
 推荐链路：
 - 平台 token 负责业务入口
 - Authentik invitation/enrollment flow 负责身份接入
 - start 阶段延迟创建或换取 enrollment URL
-- 登录完成后由 post-login 收口并绑定 workspace/role
+- 登录完成后由 post-login 收口，先映射 `appRole`，再绑定 workspace/workspaceRole
 - 邮箱强校验在 post-login 阶段执行
 - Orchestrator 决策，RuntimeManager 执行
 ```
@@ -791,9 +822,9 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 
 ## 17. 常见误区
 
-### 误区 1：把 Authentik 当成 workspace 权限中心
+### 误区 1：把 Authentik Group 映射扩大成全部授权真相
 
-不对。它是身份系统，不是平台业务授权的唯一真相。
+不对。应用级角色可以来自 Authentik Groups，但 `workspace membership / workspaceRole` 仍然应该留在平台业务侧。
 
 ### 误区 2：对外直接发 Authentik invitation 链接
 
@@ -828,20 +859,21 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 那么首版最稳的方案就是：
 
 1. **官方 Authentik 负责身份、密码、会话**
-2. **ClawLoops 负责 invitation 业务真相和 workspace/role 绑定**
-3. **Traefik + Outpost 负责统一前置鉴权**
-4. **首版只做本地密码**
-5. **把 invitation 链接定义成一次性免密码接入入口**
-6. **在 enrollment flow 里直接设置用户密码**
-7. **采用延迟创建 Authentik invitation 的模式**
-8. **把 `workspace-entry` 定义成唯一跳转入口**
-9. **把 runtime V1 明确定成 `clawloops_shared + 18789 + rt-<runtimeId> + compat 必填`**
-10. **让 Orchestrator 负责异步任务，让 RuntimeManager 只做同步执行器**
+2. **Authentik Groups 提供应用级角色输入，`clawloops-admins` 映射到 `admin`**
+3. **ClawLoops 负责 invitation 业务真相和 workspace/workspaceRole 绑定**
+4. **Traefik + Outpost 负责统一前置鉴权**
+5. **首版只做本地密码**
+6. **把 invitation 链接定义成一次性免密码接入入口**
+7. **在 enrollment flow 里直接设置用户密码**
+8. **采用延迟创建 Authentik invitation 的模式**
+9. **把 `workspace-entry` 定义成唯一跳转入口**
+10. **把 runtime V1 明确定成 `clawloops_shared + 18789 + rt-<runtimeId> + compat 必填`**
+11. **让 Orchestrator 负责异步任务，让 RuntimeManager 只做同步执行器**
 
-这套方案最符合当前需求、实施成本最低、后续扩展阻力最小。
+这套方案更贴近统一 IAM 接入思路，也能直接解决“用户已认证但 `isAdmin=false`”这类应用管理员判定问题。
 
 ---
 
-v0.8-authentik-runtime-frozen  
+v0.9-authentik-group-role-mapping  
 reno  
-2026-03-23
+2026-03-25
