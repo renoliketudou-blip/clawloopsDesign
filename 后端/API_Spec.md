@@ -823,6 +823,6 @@ POST `/internal/runtime-manager/containers/ensure-running`
 
 ---
 
-v0.8-authentik-runtime-frozen  
+v0.9-新增管理页面
 reno  
-2026-03-23
+2026-03-25 14:47

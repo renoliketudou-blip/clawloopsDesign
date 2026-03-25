@@ -891,6 +891,6 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 
 ---
 
-v0.9-authentik-group-role-mapping  
+v0.9-新增管理页面
 reno  
-2026-03-25
+2026-03-25 14:47
