@@ -1,4 +1,4 @@
-# ClawLoops 页面调用流程（BFF 编排冻结版）
+# ClawLoops 页面调用流程（BFF 编排冻结版，轻量认证修订）
 
 ## 1. 文档目标
 
@@ -8,6 +8,13 @@
 - 用户操作触发的接口编排
 - 页面与 BFF 的职责分界
 - 跳转与轮询的唯一标准
+
+本版默认前提：
+
+- 平台使用业务内轻量认证
+- 登录真相来自平台 session
+- invitation 在站内完成首次设密与接入
+- 首版不做改密与找回密码
 
 ---
 
@@ -23,18 +30,16 @@
 
 - `/internal/*`
 - Runtime Manager internal API
-- Authentik 用户/邀请管理 API
+- 任何第三方 IAM API
 
-前端唯一允许直接离开应用域的动作：
+前端唯一允许直接离开当前控制面域的动作：
 
-- 接收 `/api/v1/public/invitations/{token}/start` 返回的 `redirectUrl`
-- 浏览器整页跳转到 Authentik enrollment flow
 - 从 `workspace-entry` 获得 `browserUrl` 后整页跳转到 workspace 子域名
 
 ### 2.2 编排规则
 
 1. 页面可见状态以 BFF 返回为准，不靠前端推理补业务结论。
-2. `post-login` 与 `start` 视为幂等接口，前端可以安全重试。
+2. `accept` 视为幂等接口，前端可以安全重试。
 3. 非管理员用户的默认控制面是 `/app`，`/workspace-entry` 只负责最终跳转。
 4. runtime 动作先拿 `taskId`，再轮询任务，再刷新 runtime 状态。
 5. workspace 跳转只信 `GET /api/v1/workspace-entry`。
@@ -48,9 +53,8 @@
 
 | 路由 | 页面名称 | 权限 | 初始化接口 | 主动作 |
 | --- | --- | --- | --- | --- |
-| `/login` | 登录入口页 | 公开 | `/api/v1/auth/options` | 跳 Authentik 登录 |
-| `/invite/:token` | invitation 接入页 | 公开 | `/api/v1/public/invitations/{token}` | `/start` |
-| `/post-login` | 登录完成收口页 | 已登录 | `/api/v1/auth/post-login` | 收口后按 `redirectTo` 跳转 |
+| `/login` | 登录入口页 | 公开 | `/api/v1/auth/options` | `/auth/login` |
+| `/invite/:token` | invitation 接入页 | 公开 | `/api/v1/public/invitations/{token}` | `/accept` |
 | `/app` | 用户工作台 | 已登录且 allowed | `/auth/me`、`/auth/access`、`/users/me/runtime/status`、`/models` | start/stop/delete/open |
 | `/workspace-entry` | 工作区入口页 | 已登录且 allowed | `/auth/me`、`/auth/access`、`/workspace-entry` | 跳 workspace |
 | `/admin` | 管理后台首页 | admin | `/auth/me`、`/auth/access`、`/admin/home` | 跳各后台子页 |
@@ -71,7 +75,7 @@
 目标：
 
 - 呈现首版唯一登录方式
-- 若已登录则不重复展示登录按钮
+- 若已登录则不重复展示登录表单
 
 调用顺序：
 
@@ -84,12 +88,20 @@
 - 登录入口文案以 `/auth/options.methods[0].label` 为准（当前固定为 `用户名优先登录`）
 - 对无真实邮箱用户，登录页辅助文案应明确“请优先使用管理员提供的用户名登录”
 - 不展示 Google、GitHub、企业 SSO 等入口
+- 不展示改密和找回密码入口
 - 若 `/auth/me` 已表明已登录，则按角色跳 `/admin` 或 `/app`
+
+点击“登录”流程：
+
+1. 收集 `username`
+2. 收集 `password`
+3. `POST /api/v1/auth/login`
+4. 成功后按 `redirectTo` 跳 `/admin` 或 `/app`
 
 前端职责：
 
-- 只负责展示入口按钮和说明文案
-- 不负责拼装身份参数
+- 只负责展示表单、校验必填和错误态
+- 不负责持久化密码
 
 ## 4.2 invitation 接入页 `/invite/:token`
 
@@ -97,456 +109,155 @@
 
 1. 解析路由参数 `token`
 2. `GET /api/v1/public/invitations/{token}`
-3. 可选：`GET /api/v1/auth/me`，用于识别当前浏览器是否已有登录态
-4. 根据返回渲染有效页或失效页
+3. 根据返回渲染有效页或失效页
+
+### 页面展示规则
+
+- 必须展示 `workspaceName`
+- 必须展示 `role`
+- 必须展示 `expiresAt`
+- 若存在 `loginUsername`，必须将其作为主说明文案
+- 若存在 `targetEmail` 且为代理邮箱，不应把它作为主提示文案
+- 页内必须提供“设置初始密码并继续”主 CTA
 
 ### 点击“继续接入”流程
 
-前置判断：
+1. 收集 `username`
+2. 收集 `password`
+3. 收集 `passwordConfirm`
+4. `POST /api/v1/public/invitations/{token}/accept`
+5. 成功后按 `redirectTo` 进入 `/app`
 
-- 若页面已识别出“当前登录账号”与“邀请目标账号”看起来不一致，则默认不直接触发 `/start`
-- 此时页面先展示错账号风险卡片，主 CTA 为“切换账号后继续接入”
-- 用户完成切换账号后，再回到本页继续正常的 `/start` 流程
+失败分支要求：
 
-1. `POST /api/v1/public/invitations/{token}/start`
-2. 拿到：
-   - `status=accepted`
-   - `pendingInvitationSession.ttlSeconds`
-   - `redirectUrl`
-3. 浏览器整页跳转 `redirectUrl`
-
-页面提示要求：
-
-- 若当前浏览器已有登录态，页面应显式展示“当前登录账号”和“推荐登录账号”
-- 若返回了 `loginUsername`，前端应优先展示它；代理邮箱只作为后台校验语义，不作为普通用户主文案
-- 若两者看起来不一致，前端不做业务校验结论，但必须把它做成可操作流程，而不是只停留在提示
-- 错账号风险卡片最少要提供：
-  - `切换账号后继续接入` 作为主 CTA
-  - `返回登录入口` 作为次 CTA
-  - `联系管理员` 作为兜底动作
-- invitation 失败页必须提供回登录入口、联系管理员或稍后重试等可恢复动作
-
-### 失败收口
-
-| 场景 | 处理 |
-| --- | --- |
-| token 无效 | 留在当前页，渲染无效 invitation |
-| `INVITATION_REVOKED` | 渲染已撤销 |
-| `INVITATION_EXPIRED` | 渲染已过期 |
-| `INVITATION_ALREADY_CONSUMED` | 渲染已使用 |
-| `INVITATION_ERROR` | 允许重试 |
-
-前端不做：
-
-- 不自行写 pending invitation session
-- 不在前端缓存 `itoken`
-- 不在前端做账号匹配校验
-
-## 4.3 post-login 收口页 `/post-login`
-
-### 冻结事实
-
-`POST /api/v1/auth/post-login` 是前端主动调用的 BFF 接口，不是 Authentik callback。
-
-### 调用顺序
-
-1. 页面加载后，确认浏览器已带 Authentik 登录态
-2. `POST /api/v1/auth/post-login`
-3. BFF 内部完成：
-   - `/internal/users/sync`
-   - 检查 pending invitation 上下文
-   - 身份邮箱槽位强校验
-   - membership 绑定
-   - invitation consume
-4. 前端根据 BFF 返回决定下一跳
-
-### 前端跳转策略
-
-| 返回结果 | 下一步 |
-| --- | --- |
-| `entryType=admin_console` | 跳 `/admin` |
-| `entryType=workspace` 且 `hasWorkspace=true` | 跳 `/app` |
-| `hasWorkspace=false` | 进入无工作区页，并给出联系管理员或返回入口动作 |
-
-用户体验规则：
-
-- `post-login` 对普通用户的目标是把人送到“可继续操作的页面”，而不是直接送到中转页
-- 若 `invitationApplied=true`，`/app` 首屏必须先展示“你已成功加入 <workspaceName>”的强确认，再展示单一主 CTA“开始准备工作区”或“继续准备工作区”
-- 首登成功后的确认区必须说明：
-  - 接入已完成
-  - 当前加入的 workspace
-  - 下一步只需要准备工作区
-- 账号不匹配、邀请失效、无工作区都必须提供明确下一步
-
-### 错误处理
-
-| code | 页面行为 |
-| --- | --- |
-| `INVITATION_EMAIL_MISMATCH` | 显示当前登录账号与邀请目标账号不匹配，并提供“切换账号后继续接入”“返回登录入口”动作 |
-| `INVITATION_REVOKED` | 显示邀请失效，并提供联系管理员动作 |
-| `INVITATION_EXPIRED` | 显示邀请过期，并提供联系管理员动作 |
-| `INVITATION_WORKSPACE_INVALID` | 显示目标工作区无效，并提供联系管理员动作 |
-| `USER_SYNC_ERROR` | 显示登录收口失败，可重试 |
-| `USER_DISABLED` | 显示账号已禁用 |
-| `INVITATION_ERROR` | 显示系统错误，可重试 |
+- `INVITATION_NOT_FOUND`、`INVITATION_EXPIRED`、`INVITATION_REVOKED`、`INVITATION_ALREADY_CONSUMED` 都要有独立说明
+- `INVITATION_USERNAME_MISMATCH` 要明确提示“请使用管理员提供的用户名完成接入”
+- `INVITATION_PASSWORD_INVALID` 要在表单区直接给出可操作提示
 
 ---
 
-## 5. 用户控制面编排
+## 5. 已登录页面编排
 
 ## 5.1 用户工作台 `/app`
 
-### 初始化流程
-
-按后端联调建议固定顺序：
+初始化顺序：
 
 1. `GET /api/v1/auth/me`
 2. `GET /api/v1/auth/access`
 3. `GET /api/v1/users/me/runtime/status`
 4. `GET /api/v1/models`
 
-建议执行方式：
+页面规则：
 
-- `auth/me` 先跑
-- 已登录后并发执行 `auth/access`、`runtime/status`、`models`
+- 首次接入成功后，页面首屏必须先确认“你已成功加入某个 workspace”
+- 该确认态要和普通回访态共存，不单独再做 `/post-login`
+- 若 `allowed=false`，进入禁用拦截态
 
-### 页面展示切面
+用户操作：
 
-| 切面 | 数据来源 |
-| --- | --- |
-| 账号信息 | `/auth/me` |
-| 访问是否允许 | `/auth/access` |
-| runtime 卡片 | `/users/me/runtime/status` |
-| 模型只读列表 | `/models` |
-
-工作台交互要求：
-
-- 首次接入用户与回访用户共用 `/app`，但首屏提示不同
-- 首次接入且 runtime 尚未就绪时，首屏必须先展示“接入成功确认区”，再给出唯一主 CTA“开始准备工作区”或“继续准备工作区”
-- 回访用户优先看到最近状态和“进入工作区”入口
-- runtime 状态文案以“未启动 / 准备中 / 可进入 / 启动失败”为主，不直接暴露底层实现术语
-- runtime 准备态不能只显示一个抽象状态词，必须展示阶段化进度与当前下一步
-
-### 点击“启动 runtime”
-
-1. `POST /api/v1/users/me/runtime/start`
-2. 拿到 `taskId`
-3. 进入轮询：
-   - `GET /api/v1/runtime/tasks/{taskId}`
-4. 每次任务状态变化后或定时补偿刷新：
-   - `GET /api/v1/users/me/runtime/status`
-5. 当 `task.status` 进入终态时停止任务轮询
-6. 以最新 `runtime.status.ready` 更新页面
-
-终态判断：
-
-| task.status | 页面处理 |
-| --- | --- |
-| `succeeded` | 刷新状态，若 `ready=true` 则允许进入工作区 |
-| `failed` | 刷新状态并展示 `lastError` |
-| `canceled` | 刷新状态并解除按钮禁用 |
-
-等待体验要求：
-
-- 页面要把 runtime 准备做成真正的进度体验，而不是只显示 loading 或“准备中”
-- 最少展示 4 个连续步骤：
-  - 已接入 workspace
-  - 正在创建运行环境
-  - 正在启动服务
-  - 正在验证工作区入口
-- 当前步骤必须高亮，已完成步骤必须可见，用户要能知道“现在做到哪一步了”
-- 页面要明确提示“准备仍在继续，可稍后回来”
-- 轮询中允许用户离开当前页，返回工作台后继续根据最新状态渲染，并保留上次已完成的进度步骤
-- 超过预期时间时，要从“加载中”切换为“仍在准备，可稍后回来”的可恢复文案
-- 失败展示应优先给出产品化文案，再保留错误码用于排障
-- 失败后至少提供：
-  - `重新准备工作区`
-  - `返回工作台稍后再试`
-  - `联系管理员`
-
-### 点击“停止 runtime”
-
-1. `POST /api/v1/users/me/runtime/stop`
-2. 拿到 `taskId`
-3. 轮询 `/runtime/tasks/{taskId}`
-4. 补充刷新 `/users/me/runtime/status`
-
-### 点击“删除 runtime”
-
-1. 用户确认删除策略：
-   - `preserve_workspace`
-   - `wipe_workspace`
-2. `POST /api/v1/users/me/runtime/delete`
-3. 请求体带 `retentionPolicy`
-4. 轮询 `/runtime/tasks/{taskId}`
-5. 刷新 `/users/me/runtime/status`
-
-### 点击“进入工作区”
-
-固定顺序：
-
-1. `GET /api/v1/workspace-entry`
-2. 仅当 `ready=true` 时整页跳转 `browserUrl`
-
-禁止做法：
-
-- 不允许直接使用 `/users/me/runtime/status.browserUrl` 进行跳转
+- 启动 runtime：`POST /api/v1/users/me/runtime/start`
+- 停止 runtime：`POST /api/v1/users/me/runtime/stop`
+- 删除 runtime：`POST /api/v1/users/me/runtime/delete`
+- 打开工作区：`GET /api/v1/workspace-entry`
 
 ## 5.2 工作区入口页 `/workspace-entry`
 
-页面目标：
-
-- 做最终跳转裁决
-- 承接“立即进入工作区”动作或短时等待
-
-调用顺序：
+初始化顺序：
 
 1. `GET /api/v1/auth/me`
 2. `GET /api/v1/auth/access`
 3. `GET /api/v1/workspace-entry`
 
-页面分支：
+规则：
 
-| 条件 | 页面行为 |
-| --- | --- |
-| `ready=true` | 立即跳工作区子域 |
-| `ready=false` 且 runtime 存在 | 停留在本页，展示与 `/app` 一致的阶段化准备进度，并允许返回工作台 |
-| `ready=false` 且 runtime 尚未准备 | 引导返回 `/app` 启动或继续准备 |
-| `USER_DISABLED` | 进入禁用页 |
-| 无 workspace | 进入无工作区页，并提供联系管理员动作 |
-
-### 轮询建议
-
-若业务希望本页自动等待 runtime ready，可采用：
-
-1. 首次调 `/workspace-entry`
-2. 若 `ready=false`，每 2 秒重试一次
-3. 60 秒后改为每 3 秒重试一次
-4. 最长 180 秒
-5. 超时后保留手动刷新，并允许用户返回 `/app` 稍后再试
-
-此轮询只允许发生在 `/workspace-entry` 页，不建议在任意页面后台常驻。
-此页应被设计成短时等待页，而不是普通用户登录后的默认首页。
-此页若处于等待态，应复用 `/app` 的阶段化进度展示与恢复动作，不再退化成单句文案页。
+- 只在 `ready=true` 时允许整页跳转 `browserUrl`
+- `observedState` 只用于展示，不作为最终跳转依据
+- 用户若无合法 workspace，应回到 `/app` 的承接态
 
 ---
 
 ## 6. 管理后台编排
 
-## 6.1 管理后台首页 `/admin`
+## 6.1 `/admin`
 
-调用顺序：
-
-1. `GET /api/v1/auth/me`
-2. `GET /api/v1/auth/access`
-3. 校验 `role=admin`
-4. `GET /api/v1/admin/home`
-
-首页最小渲染块：
-
-- 摘要卡片：用户、invitation、runtime
-- 待办列表：`attention.pendingInvitations`
-- 异常列表：`attention.runtimeAlerts`
-- 快捷导航：用户管理、邀请管理、Usage 汇总
-
-冻结要求：
-
-- 首页不依赖 workspace membership
-- 首页不直接执行写操作
-- 首页只承载摘要、待办与跳转
-
-## 6.2 用户列表页 `/admin/users`
-
-调用顺序：
+初始化顺序：
 
 1. `GET /api/v1/auth/me`
 2. `GET /api/v1/auth/access`
-3. 校验 `role=admin`
-4. `GET /api/v1/admin/users`
+3. `GET /api/v1/admin/home`
 
-动作流程：
+规则：
 
-- 修改用户状态：
-  1. `PATCH /api/v1/admin/users/{userId}/status`
-  2. 成功后回刷 `GET /api/v1/admin/users`
+- 非 admin 用户统一进入 403 无权限页
+- `/admin` 不是中转页，必须是可用首页
 
-冻结要求：
+## 6.2 `/admin/invitations`
 
-- 用户列表页最小字段就按后端建议字段展示
-- 前端不猜更多筛选条件，除非后端后续补充接口
+初始化顺序：
 
-## 6.3 用户详情页 `/admin/users/:userId`
+1. `GET /api/v1/auth/me`
+2. `GET /api/v1/auth/access`
+3. `GET /api/v1/admin/invitations`
 
-调用顺序：
+动作编排：
 
-1. `GET /api/v1/admin/users/{userId}`
-2. `GET /api/v1/admin/users/{userId}/runtime`
+- 创建 invitation：`POST /api/v1/admin/invitations`
+- 撤销 invitation：`POST /api/v1/admin/invitations/{invitationId}/revoke`
+- 重发 invitation：`POST /api/v1/admin/invitations/{invitationId}/resend`
 
-动作流程：
+创建成功后页面至少要展示：
 
-- 启用/禁用：
-  1. `PATCH /api/v1/admin/users/{userId}/status`
-  2. 回刷详情
-  3. 回刷 runtime 区块
-
-## 6.4 invitation 列表页 `/admin/invitations`
-
-调用顺序：
-
-1. `GET /api/v1/admin/invitations`
-
-动作流程：
-
-- 创建 invitation：
-  1. 打开创建弹窗
-  2. `POST /api/v1/admin/invitations`
-  3. 成功后回刷列表
-
-- 撤销 invitation：
-  1. `POST /api/v1/admin/invitations/{invitationId}/revoke`
-  2. 成功后回刷列表
-
-- 重发 invitation：
-  1. `POST /api/v1/admin/invitations/{invitationId}/resend`
-  2. 成功后回刷列表
-
-创建请求冻结字段：
-
-```json
-{
-  "targetEmail": "emp001@noemail.local",
-  "loginUsername": "emp001",
-  "workspaceId": "ws_001",
-  "role": "workspace_member",
-  "expiresInHours": 72
-}
-```
-
-## 6.5 invitation 详情页 `/admin/invitations/:invitationId`
-
-调用顺序：
-
-1. `GET /api/v1/admin/invitations/{invitationId}`
-
-动作流程：
-
-- 撤销：`POST /api/v1/admin/invitations/{invitationId}/revoke`
-- 重发：`POST /api/v1/admin/invitations/{invitationId}/resend`
-
-## 6.6 模型治理页 `/admin/models`
-
-调用顺序：
-
-1. `GET /api/v1/admin/models`
-
-动作流程：
-
-1. 修改某模型策略
-2. `PUT /api/v1/admin/models/{modelId}`
-3. 成功后回刷 `GET /api/v1/admin/models`
-
-冻结边界：
-
-- 只冻结“列表 + 单项保存”编排
-- 不冻结更复杂的批量编排
-
-## 6.7 provider 凭据页 `/admin/provider-credentials`
-
-调用顺序：
-
-1. `GET /api/v1/admin/provider-credentials`
-
-动作流程：
-
-- 新增：
-  1. `POST /api/v1/admin/provider-credentials`
-  2. 成功后回刷列表
-
-- 校验：
-  1. `POST /api/v1/admin/provider-credentials/{credentialId}/verify`
-  2. 成功后更新当前项状态
-
-- 删除：
-  1. `DELETE /api/v1/admin/provider-credentials/{credentialId}`
-  2. 成功后回刷列表
-
-## 6.8 usage 汇总页 `/admin/usage`
-
-调用顺序：
-
-1. `GET /api/v1/admin/usage/summary`
-
-冻结边界：
-
-- 只冻结为查询页
-- 不引入前端二次统计真相
+- `inviteUrl`
+- `loginUsername`
+- `workspaceName`
+- `expiresAt`
 
 ---
 
-## 7. 统一轮询策略
+## 7. 页面级错误收口
 
-## 7.1 适用范围
+### 7.1 登录页
 
-只允许两类轮询：
+- `INVALID_CREDENTIALS`：用户名或密码错误
+- `USER_DISABLED`：账号已禁用，请联系管理员
+- `SESSION_ERROR`：系统繁忙，请稍后重试
 
-1. runtime 任务轮询
-2. workspace-entry ready 轮询
+### 7.2 invitation 页
 
-## 7.2 runtime 任务轮询策略
+- invitation 无效：展示专门失效页
+- 用户名不匹配：保持在当前页并高亮用户名输入
+- 密码不合法：保持在当前页并展示密码规则
 
-建议：
+### 7.3 工作台与后台
 
-1. 接到 `taskId` 后立即请求一次
-2. 前 10 秒每 2 秒轮询
-3. 10 秒后每 3 秒轮询
-4. 最长 90 秒
-5. 结束后补一次 `/users/me/runtime/status`
-
-停止条件：
-
-- `task.status in [succeeded, failed, canceled]`
-- 页面卸载
-- 用户主动取消当前动作追踪
-
-## 7.3 workspace-entry 轮询策略
-
-建议：
-
-1. 首次加载立即请求
-2. `ready=false` 时每 2 秒请求
-3. 60 秒后每 3 秒请求
-4. 最长 180 秒
-5. 超时后改为手动刷新，并提示返回工作台
+- `UNAUTHENTICATED`：回 `/login`
+- `USER_DISABLED`：进入禁用拦截态
+- `ACCESS_DENIED`：进入 403 页
 
 ---
 
-## 8. 页面到 BFF 的标准编排模板
+## 8. 不可越界事项
 
-适用于任意业务页：
-
-1. 公开页只调用公开接口。
-2. 鉴权页先过 `auth/me -> auth/access`。
-3. 页面初始化只拉“当前页最低必要数据”。
-4. 提交型动作先置为提交中，禁止重复点击。
-5. 成功后优先回刷当前页所依赖的最小数据集。
-6. 错误必须按 `code` 收口，不允许只按文案模糊判断。
+- 不解析 cookie 或 token 作为业务真相
+- 不把 `browserUrl` 直接当可访问条件，必须先看 `workspace-entry.ready`
+- 不直接调用 `/internal/*`
+- 不自己拼装 `subjectId`
+- 不新增 `/post-login`
+- 不在首版前端实现改密、找回密码或第三方登录入口
 
 ---
 
-## 9. 冻结结论
+## 9. 最终编排结论
 
-前端可以按本文直接冻结 BFF 编排：
+前端需要记住的唯一认证结论是：
 
-1. invitation 链路固定为 `preview -> start -> redirect -> post-login`
-2. 普通用户登录后默认落到 `/app`，由工作台承接首次使用与回访使用
-3. 用户工作台固定为 `me -> access -> runtime/status -> models`
-4. runtime 动作固定为 `action -> task polling -> runtime/status refresh`
-5. workspace 跳转固定为 `workspace-entry -> browserUrl`
-6. 管理后台首页固定为 `/admin -> /api/v1/admin/home`
-7. 管理后台其余页面均采用“提交后回刷列表/详情”的简单编排
-8. 前端无需等待 internal API 细节即可并行开发
+1. 登录走 `/api/v1/auth/login`
+2. invitation 接入走 `/api/v1/public/invitations/{token}/accept`
+3. 成功后直接进入 `/app` 或 `/admin`
+4. 工作区跳转只信 `/api/v1/workspace-entry`
+5. 首版不做改密和找回密码
 
+---
 
-v0.4 无真实邮箱用户友好修订
-reno  
-2026-03-25 16:05
+v0.5-轻量认证修订  
+2026-03-25
