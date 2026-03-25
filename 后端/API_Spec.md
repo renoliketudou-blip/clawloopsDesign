@@ -149,6 +149,7 @@
 | POST | `/api/v1/admin/provider-credentials` | 新增平台 provider 凭据 | admin |
 | POST | `/api/v1/admin/provider-credentials/{credentialId}/verify` | 校验平台 provider 凭据 | admin |
 | DELETE | `/api/v1/admin/provider-credentials/{credentialId}` | 删除平台 provider 凭据 | admin |
+| GET | `/api/v1/admin/usage/summary` | 获取管理侧 usage 汇总与趋势 | admin |
 
 ---
 
@@ -390,7 +391,269 @@
 
 ## 8. 管理侧接口补充
 
-### 8.1 `POST /api/v1/admin/invitations`
+管理侧列表接口统一约定：
+
+- 默认 `page=1`
+- 默认 `pageSize=20`
+- `pageSize` 最大 `100`
+- 若无额外说明，所有时间字段统一使用 UTC ISO8601 字符串
+- `/admin` 首页、列表页与详情页都必须直接信任管理侧接口返回，不允许前端自行拼摘要真相
+
+### 8.1 `GET /api/v1/admin/home`
+
+用途：
+
+- 作为 `/admin` 默认首页唯一数据源
+- 返回摘要卡片、待办事项和快捷入口
+
+示例响应：
+
+```json
+{
+  "summary": {
+    "totalUsers": 24,
+    "activeUsers": 22,
+    "disabledUsers": 2,
+    "pendingInvitations": 5,
+    "runningRuntimes": 18,
+    "runtimeErrors": 1,
+    "enabledModels": 6,
+    "providerCredentialIssues": 1
+  },
+  "todo": [
+    {
+      "id": "todo_inv_expiring",
+      "type": "INVITATION_EXPIRING",
+      "severity": "warning",
+      "title": "3 条 invitation 即将过期",
+      "count": 3,
+      "action": {
+        "label": "查看 invitation",
+        "href": "/admin/invitations"
+      }
+    },
+    {
+      "id": "todo_runtime_error",
+      "type": "RUNTIME_ERROR",
+      "severity": "critical",
+      "title": "1 个 runtime 处于 error",
+      "count": 1,
+      "action": {
+        "label": "查看用户 runtime",
+        "href": "/admin/users"
+      }
+    }
+  ],
+  "quickLinks": [
+    {
+      "label": "用户管理",
+      "href": "/admin/users"
+    },
+    {
+      "label": "邀请管理",
+      "href": "/admin/invitations"
+    },
+    {
+      "label": "模型治理",
+      "href": "/admin/models"
+    },
+    {
+      "label": "Provider 凭据",
+      "href": "/admin/provider-credentials"
+    },
+    {
+      "label": "Usage 汇总",
+      "href": "/admin/usage"
+    }
+  ],
+  "generatedAt": "2026-03-25T09:30:00Z"
+}
+```
+
+字段语义：
+
+- `summary` 只用于首页摘要卡片，不由前端再拼其他接口
+- `todo[]` 为管理员待处理事项，按 `severity` 从高到低排序
+- `severity` 只认 `info / warning / critical`
+- `quickLinks[]` 为首页快捷入口，顺序应与后台左侧导航一致
+
+### 8.2 `GET /api/v1/admin/users`
+
+查询参数：
+
+- `page`
+- `pageSize`
+- `keyword`：按 `username` 模糊查询
+- `status`：`active / disabled`
+- `role`：`admin / user`
+
+示例响应：
+
+```json
+{
+  "items": [
+    {
+      "userId": "u_001",
+      "username": "emp001",
+      "role": "user",
+      "status": "active",
+      "workspaceId": "ws_001",
+      "workspaceName": "Design Team",
+      "hasRuntime": true,
+      "runtimeObservedState": "running",
+      "lastLoginAt": "2026-03-25T08:40:00Z",
+      "createdAt": "2026-03-01T10:00:00Z"
+    },
+    {
+      "userId": "u_002",
+      "username": "admin01",
+      "role": "admin",
+      "status": "active",
+      "workspaceId": null,
+      "workspaceName": null,
+      "hasRuntime": false,
+      "runtimeObservedState": null,
+      "lastLoginAt": "2026-03-25T09:00:00Z",
+      "createdAt": "2026-02-28T09:00:00Z"
+    }
+  ],
+  "page": 1,
+  "pageSize": 20,
+  "total": 2
+}
+```
+
+字段语义：
+
+- `items[]` 为用户列表页唯一真相
+- `workspaceId / workspaceName` 为空表示当前用户尚未绑定 workspace
+- `hasRuntime` 表示是否存在 runtime 绑定，不等同于 runtime 当前正在运行
+- `runtimeObservedState` 只做列表轻量展示，不作为最终可进入判断
+
+### 8.3 `GET /api/v1/admin/users/{userId}`
+
+示例响应：
+
+```json
+{
+  "user": {
+    "userId": "u_001",
+    "subjectId": "clawloops:u_001",
+    "username": "emp001",
+    "role": "user",
+    "status": "active",
+    "tenantId": "t_default",
+    "workspaceId": "ws_001",
+    "workspaceName": "Design Team",
+    "workspaceRole": "workspace_member",
+    "lastLoginAt": "2026-03-25T08:40:00Z",
+    "createdAt": "2026-03-01T10:00:00Z"
+  }
+}
+```
+
+字段语义：
+
+- `user` 为用户详情页基础信息真相
+- `workspaceRole` 表示该用户在目标 workspace 的业务角色
+- 用户详情页的 runtime 展示由 `GET /api/v1/admin/users/{userId}/runtime` 单独提供，前端不要把两个接口混成一个对象
+
+### 8.4 `PATCH /api/v1/admin/users/{userId}/status`
+
+请求体：
+
+```json
+{
+  "status": "disabled"
+}
+```
+
+成功响应：
+
+```json
+{
+  "userId": "u_001",
+  "status": "disabled",
+  "effectiveAt": "2026-03-25T09:45:00Z"
+}
+```
+
+规则：
+
+- `status` 只允许 `active / disabled`
+- `disabled` 后，该用户已有 session 应被主动失效或在最短时间内失效
+- `disabled` 后，该用户业务接口应统一收口到 `403 USER_DISABLED`
+
+### 8.5 `GET /api/v1/admin/users/{userId}/runtime`
+
+示例响应：
+
+```json
+{
+  "workspaceId": "ws_001",
+  "workspaceName": "Design Team",
+  "runtime": {
+    "runtimeId": "rt_001",
+    "desiredState": "running",
+    "observedState": "running",
+    "ready": true,
+    "browserUrl": "https://ws-001.clawloops.app",
+    "internalEndpoint": "http://rt-rt_001:18789",
+    "retentionPolicy": "preserve_workspace",
+    "volumeId": "vol_001",
+    "imageRef": "ghcr.io/clawloops/runtime:v1"
+  }
+}
+```
+
+字段语义：
+
+- `runtime = null` 表示该用户尚未建立 runtime 绑定
+- `desiredState` 是业务目标态，`observedState` 是资源事实态，`ready` 是最终可访问态
+- `browserUrl` 仅用于展示入口，不代表匿名可访问
+- `internalEndpoint` 只用于平台内部诊断，不允许前端拿它做浏览器跳转
+
+### 8.6 `GET /api/v1/admin/invitations`
+
+查询参数：
+
+- `page`
+- `pageSize`
+- `status`：`pending / consumed / revoked`
+- `keyword`：按 `loginUsername` 或 `targetEmail` 模糊查询
+
+示例响应：
+
+```json
+{
+  "items": [
+    {
+      "invitationId": "inv_001",
+      "loginUsername": "emp001",
+      "targetEmail": "emp001@noemail.local",
+      "workspaceId": "ws_001",
+      "workspaceName": "Design Team",
+      "role": "workspace_member",
+      "status": "pending",
+      "expiresAt": "2026-03-31T23:59:59Z",
+      "inviteUrl": "https://clawloops.example.com/invite/ptok_xxx",
+      "consumedByUserId": null,
+      "consumedByUsername": null
+    }
+  ],
+  "page": 1,
+  "pageSize": 20,
+  "total": 1
+}
+```
+
+字段语义：
+
+- 列表页高频操作直接使用 `items[]`
+- `inviteUrl` 是创建成功后与列表页复制动作使用的标准字段
+- `consumedByUserId / consumedByUsername` 为空表示 invitation 尚未被消费
+
+### 8.7 `POST /api/v1/admin/invitations`
 
 请求体：
 
@@ -409,24 +672,316 @@
 ```json
 {
   "invitationId": "inv_001",
+  "loginUsername": "emp001",
+  "workspaceId": "ws_001",
+  "workspaceName": "Design Team",
+  "role": "workspace_member",
   "status": "pending",
+  "expiresAt": "2026-03-31T23:59:59Z",
   "inviteUrl": "https://clawloops.example.com/invite/ptok_xxx"
 }
 ```
 
-### 8.2 `PATCH /api/v1/admin/users/{userId}/status`
+字段语义：
 
-请求体：
+- `loginUsername` 是用户首次接入与后续登录优先使用的用户名
+- `targetEmail` 可为空或为代理邮箱，不要求前端把它作为主提示文案
+- `inviteUrl` 是管理员复制和发送 invitation 的唯一标准地址
+
+### 8.8 `GET /api/v1/admin/invitations/{invitationId}`
+
+示例响应：
 
 ```json
 {
-  "status": "disabled"
+  "invitation": {
+    "invitationId": "inv_001",
+    "loginUsername": "emp001",
+    "targetEmail": "emp001@noemail.local",
+    "workspaceId": "ws_001",
+    "workspaceName": "Design Team",
+    "role": "workspace_member",
+    "status": "pending",
+    "expiresAt": "2026-03-31T23:59:59Z",
+    "inviteUrl": "https://clawloops.example.com/invite/ptok_xxx",
+    "consumedByUserId": null,
+    "consumedByUsername": null,
+    "createdAt": "2026-03-25T09:20:00Z"
+  }
+}
+```
+
+字段语义：
+
+- `invitation` 为 invitation 详情页唯一真相
+- `status` 只认 `pending / consumed / revoked`
+- `expired` 不单独存储，仍由 `expiresAt < now` 派生
+
+### 8.9 `POST /api/v1/admin/invitations/{invitationId}/revoke`
+
+成功响应：
+
+```json
+{
+  "invitationId": "inv_001",
+  "status": "revoked",
+  "effectiveAt": "2026-03-25T10:00:00Z"
 }
 ```
 
 规则：
 
-- `disabled` 后，该用户已有 session 应被主动失效或在最短时间内失效
+- 仅 `pending` invitation 可撤销
+- 撤销成功后，对应 `inviteUrl` 必须立即失效
+
+### 8.10 `POST /api/v1/admin/invitations/{invitationId}/resend`
+
+成功响应：
+
+```json
+{
+  "invitationId": "inv_001",
+  "status": "pending",
+  "expiresAt": "2026-04-07T23:59:59Z",
+  "inviteUrl": "https://clawloops.example.com/invite/ptok_xxx",
+  "resentAt": "2026-03-25T10:05:00Z"
+}
+```
+
+规则：
+
+- 首版 `resend` 不创建第二条 invitation，沿用同一 `invitationId`
+- 若需要延长有效期，应在该动作中返回最新 `expiresAt`
+- 已 `consumed` 或已 `revoked` 的 invitation 不允许 `resend`
+
+### 8.11 `GET /api/v1/admin/models`
+
+示例响应：
+
+```json
+{
+  "items": [
+    {
+      "modelId": "gpt-4.1-mini",
+      "displayName": "GPT-4.1 Mini",
+      "provider": "openai",
+      "enabled": true,
+      "visibleToUsers": true,
+      "isDefault": true,
+      "updatedAt": "2026-03-25T09:00:00Z"
+    },
+    {
+      "modelId": "claude-3-7-sonnet",
+      "displayName": "Claude 3.7 Sonnet",
+      "provider": "anthropic",
+      "enabled": true,
+      "visibleToUsers": false,
+      "isDefault": false,
+      "updatedAt": "2026-03-24T16:00:00Z"
+    }
+  ]
+}
+```
+
+字段语义：
+
+- `enabled=false` 表示平台不再允许该模型被路由使用
+- `visibleToUsers=false` 表示该模型不出现在用户侧 `/api/v1/models` 列表
+- `isDefault=true` 表示该模型是当前默认推荐项，不等同于唯一可用项
+
+### 8.12 `PUT /api/v1/admin/models/{modelId}`
+
+请求体：
+
+```json
+{
+  "enabled": true,
+  "visibleToUsers": true,
+  "isDefault": false
+}
+```
+
+成功响应：
+
+```json
+{
+  "modelId": "gpt-4.1-mini",
+  "enabled": true,
+  "visibleToUsers": true,
+  "isDefault": false,
+  "updatedAt": "2026-03-25T10:10:00Z"
+}
+```
+
+规则：
+
+- `enabled / visibleToUsers / isDefault` 为首版模型治理最小可编辑字段
+- 若某模型被设为新的 `isDefault=true`，平台应保证同一时刻只有一个默认模型
+
+### 8.13 `GET /api/v1/admin/provider-credentials`
+
+示例响应：
+
+```json
+{
+  "items": [
+    {
+      "credentialId": "pc_001",
+      "provider": "openai",
+      "label": "OpenAI Prod",
+      "maskedKey": "sk-****9abc",
+      "status": "active",
+      "lastVerifiedAt": "2026-03-25T08:50:00Z",
+      "createdAt": "2026-03-01T09:00:00Z"
+    }
+  ]
+}
+```
+
+字段语义：
+
+- `maskedKey` 只用于列表展示，永远不返回明文密钥
+- `status` 只认 `unverified / active / verification_failed`
+- `lastVerifiedAt` 为空表示该凭据尚未完成验证
+
+### 8.14 `POST /api/v1/admin/provider-credentials`
+
+请求体：
+
+```json
+{
+  "provider": "openai",
+  "label": "OpenAI Prod",
+  "apiKey": "sk-live-secret",
+  "baseUrl": "https://api.openai.com/v1"
+}
+```
+
+成功响应：
+
+```json
+{
+  "credentialId": "pc_001",
+  "provider": "openai",
+  "label": "OpenAI Prod",
+  "maskedKey": "sk-****9abc",
+  "status": "unverified",
+  "lastVerifiedAt": null,
+  "createdAt": "2026-03-25T10:15:00Z"
+}
+```
+
+规则：
+
+- 请求体允许提交明文 `apiKey`，但响应体与日志都不得回传明文
+- `baseUrl` 为空时表示使用 provider 默认地址
+
+### 8.15 `POST /api/v1/admin/provider-credentials/{credentialId}/verify`
+
+成功响应：
+
+```json
+{
+  "credentialId": "pc_001",
+  "verified": true,
+  "status": "active",
+  "lastVerifiedAt": "2026-03-25T10:16:00Z"
+}
+```
+
+规则：
+
+- 验证动作只改变凭据健康状态，不改变 `credentialId`
+- 验证失败时返回明确错误，并将 `status` 收口为 `verification_failed`
+
+### 8.16 `DELETE /api/v1/admin/provider-credentials/{credentialId}`
+
+成功响应：
+
+```json
+{
+  "ok": true
+}
+```
+
+规则：
+
+- 删除后该凭据不再参与模型路由
+- 若被删除凭据当前仍被默认模型使用，后端应拒绝删除或先完成策略切换
+
+### 8.17 `GET /api/v1/admin/usage/summary`
+
+用途：
+
+- 作为 `/admin/usage` 页面唯一数据源
+- 返回全局 usage 摘要、时间序列趋势和排名信息
+
+查询参数：
+
+- `from`
+- `to`
+- `granularity`：`day / week`
+
+示例响应：
+
+```json
+{
+  "period": {
+    "from": "2026-03-01T00:00:00Z",
+    "to": "2026-03-25T23:59:59Z",
+    "granularity": "day"
+  },
+  "summary": {
+    "requestCount": 12840,
+    "promptTokens": 5320000,
+    "completionTokens": 2140000,
+    "totalTokens": 7460000,
+    "estimatedCostUsd": "132.40",
+    "activeUsers": 18,
+    "activeWorkspaces": 18
+  },
+  "series": [
+    {
+      "bucketStartAt": "2026-03-24T00:00:00Z",
+      "requestCount": 420,
+      "totalTokens": 251000,
+      "estimatedCostUsd": "4.90"
+    },
+    {
+      "bucketStartAt": "2026-03-25T00:00:00Z",
+      "requestCount": 460,
+      "totalTokens": 278000,
+      "estimatedCostUsd": "5.20"
+    }
+  ],
+  "topUsers": [
+    {
+      "userId": "u_001",
+      "username": "emp001",
+      "requestCount": 880,
+      "totalTokens": 520000,
+      "estimatedCostUsd": "10.40"
+    }
+  ],
+  "topModels": [
+    {
+      "modelId": "gpt-4.1-mini",
+      "requestCount": 6240,
+      "totalTokens": 4010000,
+      "estimatedCostUsd": "71.20"
+    }
+  ],
+  "generatedAt": "2026-03-25T10:20:00Z"
+}
+```
+
+字段语义：
+
+- `period` 是当前统计窗口回显，前端筛选栏应直接信任它
+- `summary` 用于顶部统计卡片
+- `series[]` 用于趋势图，不要求前端自己按明细重算
+- `topUsers[]` 与 `topModels[]` 为只读排行，不承担权限判定
+- `estimatedCostUsd` 是平台估算值，用于治理观察，不等同于最终财务结算
 
 ---
 
