@@ -399,6 +399,31 @@ ClawLoops 明确禁止：
 - 非管理员用户登录后再进入 `workspace-entry` 流程
 - `workspace-entry` 只负责普通用户的工作区跳转，不承担管理员首页决策
 
+### 10.5 管理后台首页最小能力
+
+`/admin` 不是空白壳路由，也不是前端自行拼装的跳板页；首版冻结为真正可用的管理后台首页。
+
+首页最小目标：
+
+- 让管理员在 1 屏内看到平台当前治理重点
+- 让管理员能直接进入高频任务，而不是先被迫进入任意二级列表页
+- 即使管理员没有任何 workspace membership，也能稳定落到可操作页面
+
+首页最小信息块：
+
+- 用户总览：`totalUsers / activeUsers / disabledUsers`
+- invitation 总览：`pendingInvitations / expiringInvitations24h`
+- runtime 总览：`runningRuntimes / runtimeErrors`
+- 待处理 invitation 列表：用于快速进入邀请治理
+- runtime 异常列表：用于快速进入用户详情排障
+
+实现边界：
+
+- 管理后台首页数据由后端聚合接口提供，避免前端首屏并发拼装多组查询
+- 首版聚合接口固定为 `GET /api/v1/admin/home`
+- 首页只做摘要与跳转，不承担复杂编辑表单
+- 写操作仍在 `/admin/users`、`/admin/invitations` 等专页完成
+
 ---
 
 ## 11. 路由、前置鉴权与 workspace 子域名
@@ -437,7 +462,7 @@ ClawLoops 明确禁止：
 | 模块 2：租户与用户资源控制 | 维护 User / Invitation / WorkspaceMembership / UserRuntimeBinding 真相；保证 invitation consume 与 membership binding 的原子性或补偿逻辑 |
 | 模块 3：Runtime 编排 | 对用户侧暴露异步任务；决定何时调用 RM；在收到 drift 后决定是否 stop+delete+recreate |
 | 模块 4：模型接入 | 不变 |
-| 模块 5：管理后台 | 新增 invitation 创建、查看、撤销；仍负责用户治理，并作为 `admin` 登录后的默认首页 |
+| 模块 5：管理后台 | 新增 invitation 创建、查看、撤销；仍负责用户治理，并作为 `admin` 登录后的默认首页；提供首页摘要视图与高频治理入口 |
 | 模块 6：用户工作台 | 新增“邀请完成后首次进入”承接逻辑；仅负责非管理员用户的工作区承接，工作区跳转只依赖 `workspace-entry` |
 | RuntimeManager | 同步执行容器动作、目录初始化、最小事实观测；不维护外层任务状态机 |
 

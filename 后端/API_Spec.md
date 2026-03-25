@@ -23,7 +23,7 @@
 | internal 鉴权 | internal API 必须通过服务间鉴权（如 mTLS 或 internal token），并且禁止公网访问 |
 | disabled 语义 | 除 `/api/v1/auth/me` 外，disabled 用户访问业务接口统一返回 `403 USER_DISABLED`；但 `/api/v1/auth/access` 永远返回 `200`，仅用于状态判断 |
 | workspace 访问 | `browserUrl` 仅是受保护入口地址；所有 workspace 子域名必须统一经过 Traefik + Authentik Forward Auth |
-| 跳转规则 | `admin` 登录后默认进入 `/admin`；非管理员用户只有在 `ready=true` 时才允许跳转到 `browserUrl`；知道 URL 不代表可访问 |
+| 跳转规则 | `admin` 登录后默认进入 `/admin`；`/admin` 使用独立首页摘要接口；非管理员用户只有在 `ready=true` 时才允许跳转到 `browserUrl`；知道 URL 不代表可访问 |
 | 字段命名 | 以本文件“字段冻结清单”为唯一基线，禁止别名漂移 |
 
 ---
@@ -114,6 +114,7 @@
 - `observedState` = 资源状态
 - `ready` = 最终可访问状态
 - `admin` 登录后默认进入 `/admin`
+- `/admin` 首屏数据由 `GET /api/v1/admin/home` 提供
 - 非管理员用户的工作区跳转只看 `ready`
 - `workspace-entry` 是唯一工作区跳转入口接口
 - `runtime/status` 仅用于状态展示，不作为最终跳转依据
@@ -153,6 +154,7 @@
 | GET | `/api/v1/runtime/tasks/{taskId}` | 查询 runtime 任务状态 | 用户 / admin |
 | GET | `/api/v1/models` | 获取当前用户可见模型列表（只读） | 用户 |
 | GET | `/api/v1/workspace-entry` | 获取当前用户工作区入口（唯一工作区跳转入口） | 用户 |
+| GET | `/api/v1/admin/home` | 获取管理后台首页摘要与待处理事项 | admin |
 | GET | `/api/v1/admin/users` | 获取用户列表 | admin |
 | GET | `/api/v1/admin/users/{userId}` | 获取用户详情 | admin |
 | PATCH | `/api/v1/admin/users/{userId}/status` | 启用 / 禁用用户 | admin |
@@ -278,6 +280,7 @@ POST `/api/v1/auth/post-login`
   "status": "ok",
   "userId": "u_001",
   "invitationApplied": true,
+  "entryType": "workspace",
   "redirectTo": "/workspace-entry",
   "result": "already_bound_or_consumed"
 }
@@ -287,6 +290,7 @@ POST `/api/v1/auth/post-login`
 
 - `appRole=admin` 时，`redirectTo` 返回 `/admin`
 - 非管理员用户时，`redirectTo` 返回 `/workspace-entry`
+- `entryType` 至少支持 `admin_console | workspace`
 
 ---
 
@@ -478,7 +482,61 @@ GET `/api/v1/workspace-entry`
 
 ## 8. 管理员侧接口
 
-### 8.1 获取用户列表
+### 8.1 获取管理后台首页摘要
+
+GET `/api/v1/admin/home`
+
+用途：
+
+- 作为 `/admin` 默认首页的唯一首屏聚合接口
+- 返回平台治理摘要与待处理事项
+- 不承担写操作
+
+**响应示例**：
+
+```json
+{
+  "summary": {
+    "totalUsers": 128,
+    "activeUsers": 120,
+    "disabledUsers": 8,
+    "pendingInvitations": 12,
+    "expiringInvitations24h": 3,
+    "runningRuntimes": 47,
+    "runtimeErrors": 2
+  },
+  "attention": {
+    "pendingInvitations": [
+      {
+        "invitationId": "inv_001",
+        "targetEmail": "user@example.com",
+        "workspaceId": "ws_001",
+        "role": "workspace_member",
+        "status": "pending",
+        "expiresAt": "2026-03-31T23:59:59Z"
+      }
+    ],
+    "runtimeAlerts": [
+      {
+        "userId": "u_002",
+        "runtimeId": "rt_002",
+        "observedState": "error",
+        "lastError": "container start failed",
+        "updatedAt": "2026-03-25T10:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+冻结要求：
+
+- `summary.*` 字段必须一次性返回，前端不自行拼装计数
+- `attention.pendingInvitations[]` 用于首页快捷进入邀请治理
+- `attention.runtimeAlerts[]` 用于首页快捷进入用户详情排障
+- 首页接口为只读接口，写操作仍在各自管理页完成
+
+### 8.2 获取用户列表
 
 GET `/api/v1/admin/users`
 
@@ -492,11 +550,11 @@ GET `/api/v1/admin/users`
 - `runtimeObservedState`
 - `lastLoginAt`
 
-### 8.2 获取用户详情
+### 8.3 获取用户详情
 
 GET `/api/v1/admin/users/{userId}`
 
-### 8.3 修改用户状态
+### 8.4 修改用户状态
 
 PATCH `/api/v1/admin/users/{userId}/status`
 
@@ -508,15 +566,15 @@ PATCH `/api/v1/admin/users/{userId}/status`
 }
 ```
 
-### 8.4 获取指定用户 runtime 详情
+### 8.5 获取指定用户 runtime 详情
 
 GET `/api/v1/admin/users/{userId}/runtime`
 
-### 8.5 invitation 列表
+### 8.6 invitation 列表
 
 GET `/api/v1/admin/invitations`
 
-### 8.6 创建 invitation
+### 8.7 创建 invitation
 
 POST `/api/v1/admin/invitations`
 
@@ -531,19 +589,19 @@ POST `/api/v1/admin/invitations`
 }
 ```
 
-### 8.7 获取 invitation 详情
+### 8.8 获取 invitation 详情
 
 GET `/api/v1/admin/invitations/{invitationId}`
 
-### 8.8 撤销 invitation
+### 8.9 撤销 invitation
 
 POST `/api/v1/admin/invitations/{invitationId}/revoke`
 
-### 8.9 重发 invitation
+### 8.10 重发 invitation
 
 POST `/api/v1/admin/invitations/{invitationId}/resend`
 
-### 8.10 全局模型与 provider 凭据治理
+### 8.11 全局模型与 provider 凭据治理
 
 保留原接口：
 
@@ -714,8 +772,9 @@ POST `/internal/runtime-manager/containers/ensure-running`
 ### 11.4 工作区跳转
 
 1. 若当前用户为 `admin`，直接进入 `/admin`
-2. 若当前用户不是 `admin`，先调 `/api/v1/workspace-entry`
-3. 只有 `ready=true` 才跳转到 `browserUrl`
+2. `/admin` 首屏请求 `GET /api/v1/admin/home`
+3. 若当前用户不是 `admin`，先调 `/api/v1/workspace-entry`
+4. 只有 `ready=true` 才跳转到 `browserUrl`
 
 ---
 
@@ -756,7 +815,7 @@ POST `/internal/runtime-manager/containers/ensure-running`
 2. **Invitation 采用双层模型，但首版一律延迟创建 Authentik invitation**
 3. **`POST /api/v1/auth/post-login` 作为幂等收口入口**
 4. **`/auth/access` 永远返回 `200`，仅用于状态判断**
-5. **`admin` 登录后默认进入 `/admin`；`workspace-entry` 是唯一工作区跳转入口，前端只在 `ready=true` 时跳转**
+5. **`admin` 登录后默认进入 `/admin`，并通过 `GET /api/v1/admin/home` 加载首页摘要；`workspace-entry` 是唯一工作区跳转入口，前端只在 `ready=true` 时跳转**
 6. **runtime 删除改为 `POST /api/v1/users/me/runtime/delete`，不再依赖 DELETE body**
 7. **所有 workspace 子域名必须统一经过 Traefik + Authentik Forward Auth**
 8. **RuntimeManager internal 接口同步执行，`taskId` 只存在于 Orchestrator 对外层**

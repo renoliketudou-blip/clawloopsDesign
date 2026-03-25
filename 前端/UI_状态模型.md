@@ -27,6 +27,7 @@
 | invitation 预览 | `GET /api/v1/public/invitations/{token}` |
 | invitation 启动 | `POST /api/v1/public/invitations/{token}/start` |
 | 登录后收口 | `POST /api/v1/auth/post-login` |
+| admin 首页 | `GET /api/v1/admin/home` |
 | runtime 最终跳转 | `GET /api/v1/workspace-entry` |
 | runtime 展示态 | `GET /api/v1/users/me/runtime/status` |
 | runtime 完整真相 | `GET /api/v1/users/me/runtime` |
@@ -127,6 +128,8 @@
 
 ```json
 {
+  "entryType": "workspace",
+  "redirectTo": "/workspace-entry",
   "hasWorkspace": true,
   "workspaceId": "ws_xxx",
   "needsWorkspaceSelection": false
@@ -140,6 +143,7 @@
   "status": "ok",
   "userId": "u_001",
   "invitationApplied": true,
+  "entryType": "workspace",
   "redirectTo": "/workspace-entry",
   "result": "already_bound_or_consumed"
 }
@@ -148,11 +152,25 @@
 冻结建议：
 
 - BFF 适配层对外统一映射为：
+  - `entryType`
+  - `redirectTo`
   - `hasWorkspace`
   - `workspaceId | null`
   - `needsWorkspaceSelection`
   - `invitationApplied | false`
   - `result | null`
+
+管理员示例：
+
+```json
+{
+  "entryType": "admin_console",
+  "redirectTo": "/admin",
+  "hasWorkspace": false,
+  "workspaceId": null,
+  "needsWorkspaceSelection": false
+}
+```
 
 ### 3.5 RuntimeStatusProjection
 
@@ -197,7 +215,33 @@
 - `status` 至少支持 `pending | running | succeeded | failed | canceled`
 - 任务页或弹层只能展示进度，不直接决定是否跳转 workspace
 
-### 3.7 WorkspaceEntry
+### 3.7 AdminHome
+
+```json
+{
+  "summary": {
+    "totalUsers": 128,
+    "activeUsers": 120,
+    "disabledUsers": 8,
+    "pendingInvitations": 12,
+    "expiringInvitations24h": 3,
+    "runningRuntimes": 47,
+    "runtimeErrors": 2
+  },
+  "attention": {
+    "pendingInvitations": [],
+    "runtimeAlerts": []
+  }
+}
+```
+
+前端语义：
+
+- 这是 `/admin` 首页唯一可信数据源
+- 首页只做摘要展示、异常提示与跳转
+- 首页不依赖 workspace membership
+
+### 3.8 WorkspaceEntry
 
 ```json
 {
@@ -309,8 +353,9 @@
 | 当前状态 | 事件 | 下一状态 | UI 行为 |
 | --- | --- | --- | --- |
 | `initializing` | 拿到登录态 | `callingPostLogin` | 显示“正在完成登录” |
-| `callingPostLogin` | `hasWorkspace=true && needsWorkspaceSelection=false` | `postLoginSucceeded` | 跳到工作台入口页 |
-| `callingPostLogin` | `hasWorkspace=true && needsWorkspaceSelection=true` | `needsWorkspaceSelection` | 跳 `workspace-entry` |
+| `callingPostLogin` | `entryType=admin_console` | `postLoginSucceeded` | 跳 `/admin` |
+| `callingPostLogin` | `entryType=workspace && hasWorkspace=true && needsWorkspaceSelection=false` | `postLoginSucceeded` | 跳到工作台入口页 |
+| `callingPostLogin` | `entryType=workspace && hasWorkspace=true && needsWorkspaceSelection=true` | `needsWorkspaceSelection` | 跳 `workspace-entry` |
 | `callingPostLogin` | `hasWorkspace=false` | `workspaceMissing` | 显示无可用工作区 |
 | `callingPostLogin` | 4xx/5xx | `postLoginFailed` | 显示明确错误和重试 |
 
@@ -400,6 +445,22 @@
 - `ready=false` 时禁用“进入工作区”
 
 ## 4.6 管理后台状态机
+
+### 管理后台首页
+
+状态：
+
+- `loadingHome`
+- `homeReady`
+- `homeEmpty`
+- `homeError`
+
+冻结动作：
+
+- 进入用户管理
+- 进入邀请管理
+- 进入 Usage 汇总
+- 从 runtime 异常项进入用户详情
 
 ### 用户列表页
 
@@ -567,9 +628,10 @@ type AppError = {
 2. invitation 链路固定为 `preview -> start -> Authentik -> post-login`
 3. `post-login` 是前端主动调用的 BFF 收口接口
 4. runtime 展示、任务进度、最终跳转是三种不同状态源
-5. `workspace-entry` 是唯一跳转工作区入口
-6. 用户工作台与管理后台均可按本文状态切片直接建模
-7. 错误码、字段名、状态枚举无需等待后端二次澄清
+5. `admin` 首页固定使用 `GET /api/v1/admin/home`
+6. `workspace-entry` 是唯一跳转工作区入口
+7. 用户工作台与管理后台均可按本文状态切片直接建模
+8. 错误码、字段名、状态枚举无需等待后端二次澄清
 
 若后端实现与本文不一致，以后端三份冻结文档中的同名字段和错误码为准，但不得突破本文列出的前端边界。
 

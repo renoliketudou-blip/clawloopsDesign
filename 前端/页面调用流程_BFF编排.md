@@ -38,6 +38,7 @@
 3. runtime 动作先拿 `taskId`，再轮询任务，再刷新 runtime 状态。
 4. workspace 跳转只信 `GET /api/v1/workspace-entry`。
 5. `browserUrl` 不等于可访问，`ready=true` 才允许跳转。
+6. `admin` 首页只信 `GET /api/v1/admin/home`。
 
 ---
 
@@ -47,9 +48,10 @@
 | --- | --- | --- | --- | --- |
 | `/login` | 登录入口页 | 公开 | `/api/v1/auth/options` | 跳 Authentik 登录 |
 | `/invite/:token` | invitation 接入页 | 公开 | `/api/v1/public/invitations/{token}` | `/start` |
-| `/post-login` | 登录完成收口页 | 已登录 | `/api/v1/auth/post-login` | 收口后跳工作台 |
+| `/post-login` | 登录完成收口页 | 已登录 | `/api/v1/auth/post-login` | 收口后按 `redirectTo` 跳转 |
 | `/app` | 用户工作台 | 已登录且 allowed | `/auth/me`、`/auth/access`、`/users/me/runtime/status`、`/models` | start/stop/delete/open |
 | `/workspace-entry` | 工作区入口页 | 已登录且 allowed | `/auth/me`、`/auth/access`、`/workspace-entry` | 跳 workspace |
+| `/admin` | 管理后台首页 | admin | `/auth/me`、`/auth/access`、`/admin/home` | 跳各后台子页 |
 | `/admin/users` | 用户列表页 | admin | `/auth/me`、`/auth/access`、`/admin/users` | 改用户状态 |
 | `/admin/users/:userId` | 用户详情页 | admin | `/auth/me`、`/auth/access`、`/admin/users/{userId}`、`/admin/users/{userId}/runtime` | 启停状态治理 |
 | `/admin/invitations` | invitation 列表页 | admin | `/auth/me`、`/auth/access`、`/admin/invitations` | 创建/撤销/重发 |
@@ -79,7 +81,7 @@
 - 登录方式只展示 `local_password`
 - 登录入口文案以 `/auth/options.methods[0].label` 为准（当前固定为 `账号密码登录`）
 - 不展示 Google、GitHub、企业 SSO 等入口
-- 若 `/auth/me` 已表明已登录，直接跳 `/workspace-entry` 或用户上次入口
+- 若 `/auth/me` 已表明已登录，则按角色跳 `/admin` 或 `/workspace-entry`
 
 前端职责：
 
@@ -141,8 +143,9 @@
 
 | 返回结果 | 下一步 |
 | --- | --- |
-| `hasWorkspace=true` 且 `needsWorkspaceSelection=false` | 跳 `/workspace-entry` |
-| `hasWorkspace=true` 且 `needsWorkspaceSelection=true` | 跳 `/workspace-entry` |
+| `entryType=admin_console` | 跳 `/admin` |
+| `entryType=workspace` 且 `hasWorkspace=true` 且 `needsWorkspaceSelection=false` | 跳 `/workspace-entry` |
+| `entryType=workspace` 且 `hasWorkspace=true` 且 `needsWorkspaceSelection=true` | 跳 `/workspace-entry` |
 | `hasWorkspace=false` | 留在控制面，显示“暂无工作区” |
 
 ### 错误处理
@@ -270,7 +273,29 @@
 
 ## 6. 管理后台编排
 
-## 6.1 用户列表页 `/admin/users`
+## 6.1 管理后台首页 `/admin`
+
+调用顺序：
+
+1. `GET /api/v1/auth/me`
+2. `GET /api/v1/auth/access`
+3. 校验 `role=admin`
+4. `GET /api/v1/admin/home`
+
+首页最小渲染块：
+
+- 摘要卡片：用户、invitation、runtime
+- 待办列表：`attention.pendingInvitations`
+- 异常列表：`attention.runtimeAlerts`
+- 快捷导航：用户管理、邀请管理、Usage 汇总
+
+冻结要求：
+
+- 首页不依赖 workspace membership
+- 首页不直接执行写操作
+- 首页只承载摘要、待办与跳转
+
+## 6.2 用户列表页 `/admin/users`
 
 调用顺序：
 
@@ -290,7 +315,7 @@
 - 用户列表页最小字段就按后端建议字段展示
 - 前端不猜更多筛选条件，除非后端后续补充接口
 
-## 6.2 用户详情页 `/admin/users/:userId`
+## 6.3 用户详情页 `/admin/users/:userId`
 
 调用顺序：
 
@@ -304,7 +329,7 @@
   2. 回刷详情
   3. 回刷 runtime 区块
 
-## 6.3 invitation 列表页 `/admin/invitations`
+## 6.4 invitation 列表页 `/admin/invitations`
 
 调用顺序：
 
@@ -336,7 +361,7 @@
 }
 ```
 
-## 6.4 invitation 详情页 `/admin/invitations/:invitationId`
+## 6.5 invitation 详情页 `/admin/invitations/:invitationId`
 
 调用顺序：
 
@@ -347,7 +372,7 @@
 - 撤销：`POST /api/v1/admin/invitations/{invitationId}/revoke`
 - 重发：`POST /api/v1/admin/invitations/{invitationId}/resend`
 
-## 6.5 模型治理页 `/admin/models`
+## 6.6 模型治理页 `/admin/models`
 
 调用顺序：
 
@@ -364,7 +389,7 @@
 - 只冻结“列表 + 单项保存”编排
 - 不冻结更复杂的批量编排
 
-## 6.6 provider 凭据页 `/admin/provider-credentials`
+## 6.7 provider 凭据页 `/admin/provider-credentials`
 
 调用顺序：
 
@@ -384,7 +409,7 @@
   1. `DELETE /api/v1/admin/provider-credentials/{credentialId}`
   2. 成功后回刷列表
 
-## 6.7 usage 汇总页 `/admin/usage`
+## 6.8 usage 汇总页 `/admin/usage`
 
 调用顺序：
 
@@ -454,8 +479,9 @@
 2. 用户工作台固定为 `me -> access -> runtime/status -> models`
 3. runtime 动作固定为 `action -> task polling -> runtime/status refresh`
 4. workspace 跳转固定为 `workspace-entry -> browserUrl`
-5. 管理后台所有页面均采用“提交后回刷列表/详情”的简单编排
-6. 前端无需等待 internal API 细节即可并行开发
+5. 管理后台首页固定为 `/admin -> /api/v1/admin/home`
+6. 管理后台其余页面均采用“提交后回刷列表/详情”的简单编排
+7. 前端无需等待 internal API 细节即可并行开发
 
 
 v0.1 前端

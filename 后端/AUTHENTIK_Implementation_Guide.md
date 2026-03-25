@@ -534,6 +534,13 @@ http:
 - `admin` 登录后默认进入 `/admin`
 - `workspace-entry` 只负责非管理员用户的工作区跳转
 
+### 11.6 admin 首页规则
+
+- `/admin` 不是空白占位页
+- `/admin` 首页由后端聚合接口提供摘要数据
+- 管理员即使没有 workspace membership，也必须能稳定进入 `/admin`
+- 首页最小包含用户摘要、invitation 摘要、runtime 摘要与待处理事项
+
 ---
 
 ## 12. 推荐的数据模型补充
@@ -743,7 +750,7 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 
 ### 14.7 第七组：联调验收
 
-验收 11 条：
+验收 13 条：
 
 1. 首次管理员能初始化成功
 2. 登录页只有本地密码
@@ -756,6 +763,8 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 9. RM internal API 不再接收 `imageRef`
 10. runtime 统一跑在 `clawloops_shared + 18789 + rt-<runtimeId>`
 11. `clawloops-admins` 组成员登录后得到 `appRole=admin`
+12. `admin` 登录后默认进入 `/admin`，且不依赖 workspace membership
+13. `/api/v1/admin/home` 能返回首页摘要与待处理事项
 
 ---
 
@@ -797,6 +806,7 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 15. 增加 RUNTIME_CONTRACT_DRIFT / RUNTIME_START_FAILED / RUNTIME_STOP_FAILED / RUNTIME_DELETE_FAILED
 16. 平台禁止保存密码、禁止实现独立改密 API
 17. `admin` 登录后默认进入 `/admin`；`workspace-entry` 是唯一工作区跳转入口，前端只在 ready=true 时跳转
+18. 新增 `GET /api/v1/admin/home`，作为 `/admin` 的首屏聚合接口
 
 推荐链路：
 - 平台 token 负责业务入口
@@ -873,8 +883,9 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 7. **在 enrollment flow 里直接设置用户密码**
 8. **采用延迟创建 Authentik invitation 的模式**
 9. **把管理员首页与工作区跳转分开：`admin` 默认进 `/admin`，非管理员用户再走 `workspace-entry`**
-10. **把 runtime V1 明确定成 `clawloops_shared + 18789 + rt-<runtimeId> + compat 必填`**
-11. **让 Orchestrator 负责异步任务，让 RuntimeManager 只做同步执行器**
+10. **给 `/admin` 一个真正可用的首页，并用聚合接口返回摘要与待办**
+11. **把 runtime V1 明确定成 `clawloops_shared + 18789 + rt-<runtimeId> + compat 必填`**
+12. **让 Orchestrator 负责异步任务，让 RuntimeManager 只做同步执行器**
 
 这套方案更贴近统一 IAM 接入思路，也能直接解决“用户已认证但 `isAdmin=false`”这类应用管理员判定问题。
 

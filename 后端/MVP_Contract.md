@@ -163,7 +163,7 @@
 | 模块 2：租户与用户资源控制 | 维护 User / Invitation / WorkspaceMembership / UserRuntimeBinding 真相；负责首次 binding 初始化；保证 invitation 消费与 membership 绑定的原子性或补偿逻辑 |
 | 模块 3：Runtime 编排 | 只在用户已通过认证且业务绑定合法的前提下处理 runtime 启停删；对外返回异步 task；对内调用 RM 同步接口 |
 | 模块 4：模型接入、平台凭据代理与用量归集 | 与 Authentik 解耦，不处理密码与 invitation，只处理模型治理 |
-| 模块 5：管理后台 | 负责 invitation 创建、查看、撤销、用户治理、runtime 查看，并作为 `admin` 登录后的默认首页 |
+| 模块 5：管理后台 | 负责 invitation 创建、查看、撤销、用户治理、runtime 查看，并作为 `admin` 登录后的默认首页；提供首页摘要与高频治理入口 |
 | 模块 6：用户工作台 | 负责普通用户首次接入完成后的工作台承接、runtime 状态展示与 `workspace-entry` 跳转 |
 | RuntimeManager | 同步执行容器动作、目录初始化、挂载、网络接入、事实状态查询；不维护外层任务状态机 |
 
@@ -256,20 +256,51 @@
 - `workspace-entry` 是唯一工作区跳转入口；仅服务非管理员用户
 - `runtime/status` 只用于展示状态
 
-### 6.10 disabled 收口规则
+### 6.10 admin 默认首页规则
+
+`/admin` 首版冻结为真正可用的管理后台首页，而不是纯重定向占位页。
+
+冻结目标：
+
+- 管理员登录后立刻看到平台治理摘要
+- 管理员不依赖 workspace membership 也能进入稳定首页
+- 管理员可以从首页直达用户治理、邀请治理与 runtime 排障
+
+后端最小职责：
+
+- 提供 `GET /api/v1/admin/home`
+- 返回首页摘要统计与待处理事项
+- 避免前端首屏依赖多个后台接口自行聚合
+
+首页摘要最小字段：
+
+- `summary.totalUsers`
+- `summary.activeUsers`
+- `summary.disabledUsers`
+- `summary.pendingInvitations`
+- `summary.expiringInvitations24h`
+- `summary.runningRuntimes`
+- `summary.runtimeErrors`
+
+首页待办最小集合：
+
+- `attention.pendingInvitations[]`
+- `attention.runtimeAlerts[]`
+
+### 6.11 disabled 收口规则
 
 - 除 `/api/v1/auth/me` 外，disabled 用户访问业务接口统一返回 `403 USER_DISABLED`
 - `/api/v1/auth/access` 永远返回 `200`，仅用于状态判断
 - disabled 用户不可继续消费 invitation
 - disabled 用户若已有运行中 runtime，系统应尽快收敛到 `stopped`
 
-### 6.11 internal API 安全规则
+### 6.12 internal API 安全规则
 
 - `/internal/*` 接口只允许服务间访问
 - 必须使用 mTLS、internal token 或同等级服务鉴权
 - 禁止公网暴露
 
-### 6.12 Orchestrator 与 RuntimeManager 边界
+### 6.13 Orchestrator 与 RuntimeManager 边界
 
 冻结规则：
 
@@ -698,6 +729,12 @@ IF 有 pending invitation:
 }
 ```
 
+冻结要求：
+
+- `entryType` 至少支持 `admin_console | workspace`
+- `redirectTo` 由后端明确返回，前端不自行猜首页
+- `admin_console` 不要求返回 workspace 相关数据
+
 ---
 
 ## A4. 网关与鉴权信任边界（冻结）
@@ -751,6 +788,15 @@ IF appRole != admin AND membership > 1:
 
 IF appRole != admin AND membership == 0:
     hasWorkspace = false
+```
+
+### `/admin` 首页可用性规则
+
+```text
+IF appRole == admin:
+    首页必须可渲染
+    不依赖 membership
+    展示平台治理摘要与待办事项
 ```
 
 ### 禁用规则（强制）
