@@ -129,6 +129,7 @@
 最小列：
 
 - `targetEmail`
+- `loginUsername`
 - `workspaceId`
 - `role`
 - `expiresAt`
@@ -199,6 +200,7 @@
 - 查看列表
 - 撤销 invitation
 - 重发 invitation
+- 对无真实邮箱用户优先展示 `loginUsername`，代理邮箱仅作辅助信息
 
 `/admin/invitations/:invitationId` 负责：
 
@@ -286,6 +288,6 @@
 5. 前端无需再等待额外 admin 产品定义，即可开始页面实现。
 
 
-v0.2 新增admin页面
+v0.3 无真实邮箱用户友好修订
 reno  
 2026-03-25 14:47

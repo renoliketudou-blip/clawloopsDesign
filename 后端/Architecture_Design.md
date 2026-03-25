@@ -6,9 +6,9 @@
 | 文档定位 | 系统架构与 MVP 落地设计 |
 | --- | --- |
 | 适用范围 | 单机部署、多用户访问、容器级隔离、统一模型网关、官方 Authentik 身份接入 |
-| 本版重点 | 冻结管理员初始化口径、邀请制接入规则、首登密码流程、Traefik + Outpost 前置鉴权，以及 runtime V1 contract |
+| 本版重点 | 冻结管理员初始化口径、邀请制接入规则、首登密码流程、无真实邮箱用户兼容策略、Traefik + Outpost 前置鉴权，以及 runtime V1 contract |
 | 关联文档 | 《MVP 开发基线总契约》《MVP 统一总接口》《RuntimeManager 开发契约》《Authentik 实施文档》 |
-| 当前版本 | v0.10-user-path-frozen |
+| 当前版本 | v0.11-no-real-email-friendly |
 
 ---
 
@@ -20,6 +20,7 @@
 - **不修改 OpenClaw / 上游源码**；只改 ClawLoops 控制面、部署层、网关层与业务绑定逻辑
 - 平台运行链路统一使用共享网络 **`clawloops_shared`**
 - 首版只开放 **本地账号密码**
+- 无真实邮箱用户允许使用“用户名 + 代理邮箱槽位”接入，且前端体验必须优先围绕用户名展开
 - 所有 workspace 子域名继续统一经 **Traefik + Authentik Proxy Outpost + Forward Auth** 做前置鉴权
 - 普通用户接入采用 **邀请制**
 - 首版 invitation 采用 **双层模型 + 延迟创建**
@@ -130,7 +131,7 @@ Authentik 非常适合承接第一层；ClawLoops 承接第二层。这样职责
 
 - 平台控制面与 workspace 子域名统一由 Traefik 暴露
 - Traefik 通过 Authentik Proxy Provider 的 **Forward Auth** 中间件做前置鉴权
-- Authentik 当前只启用 **本地用户名 / 邮箱 + 密码** 登录
+- Authentik 当前只启用 **本地用户名优先登录（兼容邮箱输入）+ 密码** 登录
 - 管理员在 ClawLoops 后台创建 invitation，ClawLoops 保存业务邀请码对象
 - ClawLoops 在用户调用 `/start` 时延迟创建或换取 Authentik enrollment invitation
 - 用户点击平台 invitation 链接后，被重定向进入 Authentik enrollment flow
@@ -174,7 +175,7 @@ Authentik 非常适合承接第一层；ClawLoops 承接第二层。这样职责
 
 ### 6.1 规则
 
-- 登录页仅展示用户名 / 邮箱 + 密码
+- 登录页仅展示用户名优先登录 + 密码
 - 不显示 Google / GitHub / 企业 SSO / 微信 / 钉钉 / 飞书按钮
 - 不配置外部 Source
 - 平台首版用户全部为 Authentik 本地用户
@@ -215,6 +216,7 @@ ClawLoops 自己保存业务真相：
 - `invitationId`
 - `inviteTokenHash`
 - `targetEmail`
+- `loginUsername`
 - `workspaceId`
 - `role`
 - `status`
@@ -249,7 +251,7 @@ Authentik 负责执行身份侧 enrollment：
 7. 用户进入 enrollment flow
 8. Authentik 完成用户创建、密码设置与自动登录
 9. 浏览器回到 ClawLoops `post-login`
-10. ClawLoops 完成 user sync、邮箱强校验、membership 绑定与 invitation consume
+10. ClawLoops 完成 user sync、身份邮箱槽位强校验、membership 绑定与 invitation consume
 11. 若 `appRole=admin` 则进入管理后台；否则进入工作台
 
 ### 7.5 token 语义冻结
@@ -269,12 +271,13 @@ Authentik 负责执行身份侧 enrollment：
 - 在 enrollment flow 中由用户自己设置密码
 - 完成后自动登录
 
-### 7.7 邮箱校验规则
+### 7.7 身份邮箱槽位校验规则
 
-- 首版统一为 **强邮箱校验**
-- 当前认证身份的邮箱必须匹配 invitation `targetEmail`
+- 首版统一为 **强身份邮箱槽位校验**
+- 当前认证身份的邮箱槽位必须匹配 invitation `targetEmail`
 - 校验点固定放在 **post-login 阶段**
 - 不支持“允许覆盖”“管理员放行”等例外逻辑
+- `targetEmail` 可为真实邮箱或代理邮箱；若为代理邮箱，用户侧体验仍应优先展示 `loginUsername`
 
 ### 7.8 pending session 生命周期
 
@@ -331,7 +334,8 @@ ClawLoops 明确禁止：
 | --- | --- |
 | `invitationId` | 平台内部邀请唯一标识 |
 | `inviteTokenHash` | 平台一次性邀请码哈希 |
-| `targetEmail` | 目标邮箱；首版必填 |
+| `targetEmail` | 目标身份邮箱槽位；首版必填，可为真实邮箱或代理邮箱 |
+| `loginUsername` | 推荐登录用户名；无真实邮箱用户应提供 |
 | `workspaceId` | 目标 workspace |
 | `role` | 目标角色，例如 `admin / user / workspace_member` |
 | `status` | `pending / consumed / revoked` |
@@ -458,7 +462,7 @@ ClawLoops 明确禁止：
 
 | 模块 | 修订后的职责 |
 | --- | --- |
-| 模块 1：身份与访问接入 | 接收 Authentik 会话上下文；同步 / 创建 ClawLoops 用户；识别 admin / disabled；处理 post-login invitation 收口；执行邮箱强校验 |
+| 模块 1：身份与访问接入 | 接收 Authentik 会话上下文；同步 / 创建 ClawLoops 用户；识别 admin / disabled；处理 post-login invitation 收口；执行身份邮箱槽位强校验 |
 | 模块 2：租户与用户资源控制 | 维护 User / Invitation / WorkspaceMembership / UserRuntimeBinding 真相；保证 invitation consume 与 membership binding 的原子性或补偿逻辑 |
 | 模块 3：Runtime 编排 | 对用户侧暴露异步任务；决定何时调用 RM；在收到 drift 后决定是否 stop+delete+recreate |
 | 模块 4：模型接入 | 不变 |
@@ -484,7 +488,7 @@ ClawLoops 明确禁止：
 
 ### 13.2 管理员创建 invitation
 
-1. 管理员在 ClawLoops 后台选择目标 `workspace / role` 并填写邮箱
+1. 管理员在 ClawLoops 后台选择目标 `workspace / role`，填写 `targetEmail`，并尽量填写 `loginUsername`
 2. 模块 5 调模块 2 创建 `Invitation`
 3. 模块 2 生成一次性平台 token，并保存 invitation
 4. 系统返回可发送的 invite URL
@@ -499,7 +503,7 @@ ClawLoops 明确禁止：
 5. Authentik 完成 invitation 校验、用户写入、密码写入与自动登录
 6. 浏览器回到 ClawLoops `post-login` 入口
 7. 模块 1 完成 `/internal/users/sync`
-8. 模块 1 执行邮箱强校验
+8. 模块 1 执行身份邮箱槽位强校验
 9. 模块 2 幂等完成 `workspace / role` 绑定，并把 invitation 标记为 `consumed`
 10. 若为 `admin` 则进入管理后台；若为普通用户则进入工作台并可启动 runtime
 
@@ -634,6 +638,6 @@ networks:
 
 ---
 
-v0.10-用户自然走完修订
+v0.11-无真实邮箱用户友好修订
 reno  
 2026-03-25 16:05

@@ -231,7 +231,7 @@ networks:
 
 只开：
 
-- 用户名 / 邮箱
+- 用户名优先输入（兼容邮箱输入）
 - 密码
 
 不开放：
@@ -320,7 +320,8 @@ https://clawloops.example.com/invite/{platform_token}
 
 后台表单：
 
-- 目标邮箱
+- `targetEmail`（真实邮箱或代理邮箱）
+- `loginUsername`（无真实邮箱用户必填）
 - 目标 workspace
 - role
 - 有效期
@@ -337,8 +338,10 @@ https://clawloops.example.com/invite/{platform_token}
 
 - 你被邀请加入哪个 workspace
 - 你将获得什么角色
+- 推荐登录账号（优先展示 `loginUsername`）
 - 链接是否有效
 - 一个“继续接入”按钮
+- 若用户属于无真实邮箱场景，不把代理邮箱作为主文案暴露给普通用户
 
 #### 第三步：前端点继续接入
 
@@ -355,9 +358,15 @@ https://clawloops.example.com/invite/{platform_token}
 Enrollment Flow 建议顺序：
 
 1. Invitation Stage
-2. Prompt Stage（用户名/姓名/邮箱/密码/重复密码）
+2. Prompt Stage（用户名/姓名/邮箱槽位/密码/重复密码）
 3. User Write Stage
 4. User Login Stage
+
+无真实邮箱用户的体验建议：
+
+- `email` 使用系统分配的代理邮箱预填
+- 若 Authentik Flow 支持配置，代理邮箱字段应尽量只读或隐藏，不要求用户理解其技术含义
+- 用户界面优先显示“登录用户名”，而不是让用户记住代理邮箱
 
 #### 第五步：登录成功回到 ClawLoops
 
@@ -365,7 +374,7 @@ Enrollment Flow 建议顺序：
 
 1. 用 Authentik 会话识别当前用户
 2. 调 `/internal/users/sync`
-3. 执行邮箱强校验
+3. 执行身份邮箱槽位强校验
 4. 从 `X-Authentik-Groups` 映射 `appRole`
 5. 检查 pending invitation
 6. 绑定 workspace / workspaceRole
@@ -382,11 +391,12 @@ Enrollment Flow 建议顺序：
 - 同一 `invitationId + userId` 只能成功消费一次
 - `consume invitation` 与 `workspace membership binding` 必须原子，或定义清晰补偿逻辑
 
-### 8.6 邮箱校验固定位置
+### 8.6 身份邮箱槽位校验固定位置
 
-- 邮箱强校验统一放在 `post-login` 阶段执行
+- 身份邮箱槽位强校验统一放在 `post-login` 阶段执行
 - 即已经拿到 `subjectId` 与 `email` 之后再比对 `targetEmail`
-- 不要把邮箱校验漂移到 preview、start 或前端页面逻辑里
+- `targetEmail` 可为真实邮箱或代理邮箱
+- 不要把校验漂移到 preview、start 或前端页面逻辑里
 
 ---
 
@@ -552,6 +562,7 @@ interface Invitation {
   invitationId: string
   inviteTokenHash: string
   targetEmail: string
+  loginUsername?: string | null
   workspaceId: string
   workspaceRole: string
   status: 'pending' | 'consumed' | 'revoked'
@@ -723,7 +734,7 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 3. invitation start 接口
 4. pending invitation cookie / session
 5. post-login consume 逻辑
-6. 邮箱强校验
+6. 身份邮箱槽位强校验
 7. Authentik → ClawLoops 错误映射
 
 ### 14.5 第五组：Traefik / Outpost 接入
@@ -813,7 +824,8 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 - Authentik invitation/enrollment flow 负责身份接入
 - start 阶段延迟创建或换取 enrollment URL
 - 登录完成后由 post-login 收口，先映射 `appRole`，再绑定 workspace/workspaceRole
-- 邮箱强校验在 post-login 阶段执行
+- 身份邮箱槽位强校验在 post-login 阶段执行
+- 无真实邮箱用户的 UI 默认优先展示 `loginUsername`
 - Orchestrator 决策，RuntimeManager 执行
 ```
 
@@ -891,6 +903,6 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 
 ---
 
-v0.9-新增管理页面
+v0.10-无真实邮箱用户友好修订
 reno  
 2026-03-25 14:47

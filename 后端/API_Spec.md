@@ -6,9 +6,9 @@
 | 文档定位 | 接口与字段基线 |
 | --- | --- |
 | 适用范围 | 用户侧 / 管理员侧 / 公开 invitation 入口 / 内部服务侧 / Runtime Manager 内部接口 |
-| 修订重点 | 冻结 invitation 生命周期、统一 token 语义、补齐 runtime V1 contract、收紧字段命名与跳转口径 |
+| 修订重点 | 冻结 invitation 生命周期、统一 token 语义、补齐 runtime V1 contract、收紧字段命名与跳转口径，并兼容无真实邮箱用户 |
 | 响应原则 | 所有响应均采用 JSON；字段名直接作为开发基线，不再自行改名 |
-| 当前版本 | v0.10-user-path-frozen |
+| 当前版本 | v0.11-no-real-email-friendly |
 
 ---
 
@@ -44,7 +44,7 @@
 | 409 | `INVITATION_ALREADY_CONSUMED` | invitation 已消费 |
 | 409 | `INVITATION_REVOKED` | invitation 已撤销 |
 | 410 | `INVITATION_EXPIRED` | invitation 已过期（由 `expiresAt < now` 推导，不单独落库存状态） |
-| 422 | `INVITATION_EMAIL_MISMATCH` | 当前认证邮箱与 invitation `targetEmail` 不匹配 |
+| 422 | `INVITATION_EMAIL_MISMATCH` | 当前认证身份邮箱槽位与 invitation `targetEmail` 不匹配；目标可为真实邮箱或代理邮箱 |
 | 422 | `INVITATION_WORKSPACE_INVALID` | invitation 指向的 workspace 无效 |
 | 422 | `QUOTA_EXCEEDED` | 超出 quota |
 | 500/502 | `INVITATION_ERROR` | invitation 流程执行失败或上游身份流程失败 |
@@ -81,16 +81,17 @@
 - `revoked / expired / consumed` 必须先由平台校验
 - 即使身份侧 token 仍有效，平台也必须以平台状态阻断 `start` 或 `post-login`
 
-### 3.4 邮箱校验与首次接入流程
+### 3.4 身份邮箱槽位校验与首次接入流程
 
-- 首版统一为 **强邮箱校验**
-- 校验发生在 `POST /api/v1/auth/post-login` 阶段，即已经拿到当前 `subjectId` 与认证邮箱之后
-- 当前认证邮箱必须匹配 `targetEmail`，否则返回 `INVITATION_EMAIL_MISMATCH`
+- 首版统一为 **强身份邮箱槽位校验**
+- 校验发生在 `POST /api/v1/auth/post-login` 阶段，即已经拿到当前 `subjectId` 与认证邮箱槽位之后
+- 当前认证邮箱槽位必须匹配 `targetEmail`，否则返回 `INVITATION_EMAIL_MISMATCH`
 - 首版首次接入流程固定为：**用户通过 invitation 链接进入 enrollment flow，在 flow 内直接设置密码，并由 Authentik 自动登录**
 - 普通用户在登录收口成功后的默认落点应为 `/app`，由工作台承接首次使用与回访使用
 - 首次接入成功后，`/app` 首屏必须先给出“已成功加入目标 workspace”的强确认，再给出单一主 CTA“开始准备工作区”或“继续准备工作区”
 - 首版普通用户只会绑定 0 或 1 个 workspace，不存在前端 workspace 选择分支
 - “先 magic link 进入、之后再强制改密”不作为首版实现
+- 无真实邮箱用户允许使用系统分配的代理邮箱作为 `targetEmail`，但前端体验应优先引导其使用 `loginUsername` 登录
 
 ### 3.5 平台密码禁区
 
@@ -258,7 +259,7 @@ GET `/api/v1/auth/options`
     {
       "type": "local_password",
       "enabled": true,
-      "label": "账号密码登录"
+      "label": "用户名优先登录"
     }
   ]
 }
@@ -310,7 +311,8 @@ GET `/api/v1/public/invitations/{token}`
 {
   "valid": true,
   "invitation": {
-    "targetEmail": "user@example.com",
+    "targetEmail": "emp001@noemail.local",
+    "loginUsername": "emp001",
     "workspaceId": "ws_001",
     "workspaceName": "Design Team",
     "role": "workspace_member",
@@ -322,7 +324,9 @@ GET `/api/v1/public/invitations/{token}`
 
 前端体验提示：
 
-- 若浏览器已有登录态，前端应同时展示当前账号信息与邀请目标邮箱
+- 若浏览器已有登录态，前端应同时展示当前账号信息与邀请目标账号
+- 若响应中存在 `loginUsername`，前端应优先展示它作为“推荐登录账号”
+- 若 `targetEmail` 是代理邮箱，前端不应把它作为主文案暴露给普通用户
 - 若两者看起来不一致，前端不得直接判定业务失败，但必须把它做成可操作流程，而不是只做提示文案
 - 错账号场景至少提供：
   - `切换账号后继续接入`
@@ -550,7 +554,8 @@ GET `/api/v1/admin/home`
     "pendingInvitations": [
       {
         "invitationId": "inv_001",
-        "targetEmail": "user@example.com",
+        "targetEmail": "emp001@noemail.local",
+        "loginUsername": "emp001",
         "workspaceId": "ws_001",
         "role": "workspace_member",
         "status": "pending",
@@ -623,12 +628,19 @@ POST `/api/v1/admin/invitations`
 
 ```json
 {
-  "targetEmail": "user@example.com",
+  "targetEmail": "emp001@noemail.local",
+  "loginUsername": "emp001",
   "workspaceId": "ws_001",
   "role": "workspace_member",
   "expiresInHours": 72
 }
 ```
+
+补充约束：
+
+- 有真实邮箱用户：`targetEmail` 填真实邮箱，`loginUsername` 建议填写
+- 无真实邮箱用户：`targetEmail` 可填系统分配的代理邮箱，`loginUsername` 必填
+- 前端与后台列表默认优先展示 `loginUsername`
 
 ### 8.8 获取 invitation 详情
 
@@ -864,6 +876,6 @@ POST `/internal/runtime-manager/containers/ensure-running`
 
 ---
 
-v0.10-用户自然走完修订
+v0.11-无真实邮箱用户友好修订
 reno  
 2026-03-25 16:05

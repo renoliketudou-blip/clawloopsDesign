@@ -81,7 +81,8 @@
 页面规则：
 
 - 登录方式只展示 `local_password`
-- 登录入口文案以 `/auth/options.methods[0].label` 为准（当前固定为 `账号密码登录`）
+- 登录入口文案以 `/auth/options.methods[0].label` 为准（当前固定为 `用户名优先登录`）
+- 对无真实邮箱用户，登录页辅助文案应明确“请优先使用管理员提供的用户名登录”
 - 不展示 Google、GitHub、企业 SSO 等入口
 - 若 `/auth/me` 已表明已登录，则按角色跳 `/admin` 或 `/app`
 
@@ -103,7 +104,7 @@
 
 前置判断：
 
-- 若页面已识别出“当前登录账号”与“邀请目标邮箱”看起来不一致，则默认不直接触发 `/start`
+- 若页面已识别出“当前登录账号”与“邀请目标账号”看起来不一致，则默认不直接触发 `/start`
 - 此时页面先展示错账号风险卡片，主 CTA 为“切换账号后继续接入”
 - 用户完成切换账号后，再回到本页继续正常的 `/start` 流程
 
@@ -116,7 +117,8 @@
 
 页面提示要求：
 
-- 若当前浏览器已有登录态，页面应显式展示“当前登录账号”和“邀请目标邮箱”
+- 若当前浏览器已有登录态，页面应显式展示“当前登录账号”和“推荐登录账号”
+- 若返回了 `loginUsername`，前端应优先展示它；代理邮箱只作为后台校验语义，不作为普通用户主文案
 - 若两者看起来不一致，前端不做业务校验结论，但必须把它做成可操作流程，而不是只停留在提示
 - 错账号风险卡片最少要提供：
   - `切换账号后继续接入` 作为主 CTA
@@ -138,7 +140,7 @@
 
 - 不自行写 pending invitation session
 - 不在前端缓存 `itoken`
-- 不在前端做邮箱校验
+- 不在前端做账号匹配校验
 
 ## 4.3 post-login 收口页 `/post-login`
 
@@ -153,7 +155,7 @@
 3. BFF 内部完成：
    - `/internal/users/sync`
    - 检查 pending invitation 上下文
-   - 邮箱强校验
+   - 身份邮箱槽位强校验
    - membership 绑定
    - invitation consume
 4. 前端根据 BFF 返回决定下一跳
@@ -174,13 +176,13 @@
   - 接入已完成
   - 当前加入的 workspace
   - 下一步只需要准备工作区
-- 邮箱不匹配、邀请失效、无工作区都必须提供明确下一步
+- 账号不匹配、邀请失效、无工作区都必须提供明确下一步
 
 ### 错误处理
 
 | code | 页面行为 |
 | --- | --- |
-| `INVITATION_EMAIL_MISMATCH` | 显示账号与邀请不匹配，并提供“切换账号后继续接入”“返回登录入口”动作 |
+| `INVITATION_EMAIL_MISMATCH` | 显示当前登录账号与邀请目标账号不匹配，并提供“切换账号后继续接入”“返回登录入口”动作 |
 | `INVITATION_REVOKED` | 显示邀请失效，并提供联系管理员动作 |
 | `INVITATION_EXPIRED` | 显示邀请过期，并提供联系管理员动作 |
 | `INVITATION_WORKSPACE_INVALID` | 显示目标工作区无效，并提供联系管理员动作 |
@@ -412,7 +414,8 @@
 
 ```json
 {
-  "targetEmail": "user@example.com",
+  "targetEmail": "emp001@noemail.local",
+  "loginUsername": "emp001",
   "workspaceId": "ws_001",
   "role": "workspace_member",
   "expiresInHours": 72
@@ -544,6 +547,6 @@
 8. 前端无需等待 internal API 细节即可并行开发
 
 
-v0.3 用户自然走完修订
+v0.4 无真实邮箱用户友好修订
 reno  
 2026-03-25 16:05

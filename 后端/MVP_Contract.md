@@ -6,9 +6,9 @@
 | 文档定位 | 模块协作总契约 |
 | --- | --- |
 | 适用阶段 | MVP 首版上线 |
-| 本版重点 | 增加管理员初始化冻结口径、邀请制接入生命周期、首登密码流程、post-login 幂等、runtime 跳转规则与 runtime V1 contract |
+| 本版重点 | 增加管理员初始化冻结口径、邀请制接入生命周期、首登密码流程、post-login 幂等、无真实邮箱用户兼容策略、runtime 跳转规则与 runtime V1 contract |
 | 本版原则 | 不改上游源码、先跑通首版、边界清晰、字段冻结、便于直接落地 |
-| 当前版本 | v0.10-user-path-frozen |
+| 当前版本 | v0.11-no-real-email-friendly |
 
 ---
 
@@ -17,7 +17,7 @@
 | 项 | 说明 |
 | --- | --- |
 | 身份系统 | 官方 Authentik |
-| 首版登录方式 | 仅本地用户名/邮箱 + 密码 |
+| 首版登录方式 | 仅本地用户名优先登录（兼容邮箱输入）+ 密码 |
 | 管理员初始化 | 首个官方 bootstrap 管理员统一按默认 `akadmin` 处理 |
 | 平台模式 | 管理员提供服务，普通用户只使用自己的 workspace |
 | 邀请方式 | 平台 invitation + Authentik enrollment flow，首版延迟创建身份侧 invitation |
@@ -25,7 +25,7 @@
 | 工作区鉴权 | Traefik + Authentik Proxy Outpost + Forward Auth |
 | 密码归属 | 统一交给 Authentik 管理 |
 | runtime V1 | 固定镜像、固定端口、固定网络、固定 alias、`compat` 必填 |
-| 用户体验基线 | 普通用户登录后默认进入 `/app`，由工作台承接首次使用与回访使用 |
+| 用户体验基线 | 普通用户登录后默认进入 `/app`，由工作台承接首次使用与回访使用；无真实邮箱用户也必须可按用户名顺畅接入 |
 | workspace 关系基线 | 普通用户首版只会绑定 0 或 1 个 workspace，不存在前端 workspace 选择分支 |
 | 首版非目标 | 第三方登录、企业目录同步、复杂审批流、复杂共享空间权限、复杂费用管理 |
 
@@ -39,6 +39,7 @@
 | --- | --- |
 | `userId` | ClawLoops 平台内部用户唯一标识，例如 `u_001` |
 | `subjectId` | 外部身份唯一标识，例如 `authentik:12345` |
+| `username` | Authentik 本地登录用户名；无真实邮箱用户默认优先使用它登录 |
 | `tenantId` | MVP 固定为 `t_default` |
 | `role` | `user / admin` |
 | `user.status` | `active / disabled` |
@@ -66,7 +67,8 @@
 | `invitationId` | 平台邀请唯一标识 |
 | `inviteTokenHash` | 平台一次性 token 哈希 |
 | `invitation.status` | `pending / consumed / revoked` |
-| `targetEmail` | 被邀请邮箱 |
+| `targetEmail` | 被邀请身份邮箱槽位；可为真实邮箱或系统分配的代理邮箱 |
+| `loginUsername` | 推荐登录用户名；无真实邮箱用户应提供，供前端与管理员优先展示 |
 | `workspaceId` | 目标工作区 |
 | `invitation.role` | 被邀请后获得的业务角色 |
 | `authentikInvitationRef` | Authentik 侧 invitation 引用，首版允许为空 |
@@ -137,7 +139,8 @@
 | --- | --- | --- |
 | `invitationId` | 是 | 平台邀请唯一标识 |
 | `inviteTokenHash` | 是 | 一次性 token 哈希 |
-| `targetEmail` | 是 | 受邀邮箱 |
+| `targetEmail` | 是 | 受邀身份邮箱槽位；可为真实邮箱或系统分配的代理邮箱 |
+| `loginUsername` | 否 | 推荐登录用户名；无真实邮箱用户应提供 |
 | `workspaceId` | 是 | 邀请目标工作区 |
 | `role` | 是 | 邀请后绑定角色 |
 | `status` | 是 | `pending / consumed / revoked` |
@@ -161,7 +164,7 @@
 
 | 模块 | 职责 |
 | --- | --- |
-| 模块 1：身份与访问接入 | 对接 Authentik 会话、读取前置鉴权上下文、首次登录触发 `/internal/users/sync`、处理 invitation 完成后的 post-login 收口、执行邮箱强校验 |
+| 模块 1：身份与访问接入 | 对接 Authentik 会话、读取前置鉴权上下文、首次登录触发 `/internal/users/sync`、处理 invitation 完成后的 post-login 收口、执行身份邮箱槽位强校验 |
 | 模块 2：租户与用户资源控制 | 维护 User / Invitation / WorkspaceMembership / UserRuntimeBinding 真相；负责首次 binding 初始化；保证 invitation 消费与 membership 绑定的原子性或补偿逻辑 |
 | 模块 3：Runtime 编排 | 只在用户已通过认证且业务绑定合法的前提下处理 runtime 启停删；对外返回异步 task；对内调用 RM 同步接口 |
 | 模块 4：模型接入、平台凭据代理与用量归集 | 与 Authentik 解耦，不处理密码与 invitation，只处理模型治理 |
@@ -220,7 +223,7 @@
 
 1. `/internal/users/sync`
 2. 检查是否存在待消费 invitation 上下文
-3. 若存在，先执行邮箱强校验
+3. 若存在，先执行身份邮箱槽位强校验
 4. 调模块 2 完成 workspace / role 绑定
 5. 把 invitation 标记为 `consumed`
 6. 清理待消费上下文
@@ -389,9 +392,16 @@ RM 的 `ensure-running` 请求中：
 管理员创建 invitation 时必须提供：
 
 - `targetEmail`
+- `loginUsername`（无真实邮箱用户必填；有真实邮箱用户建议填写）
 - `workspaceId`
 - `role`
 - `expiresAt` 或默认有效期
+
+无真实邮箱用户补充规则：
+
+- `targetEmail` 允许为系统分配的代理邮箱
+- 代理邮箱只作为身份校验锚点，不要求真实可投递
+- 前端与管理员界面应优先展示 `loginUsername`，避免把代理邮箱当成主操作提示
 
 系统必须生成：
 
@@ -405,7 +415,7 @@ RM 的 `ensure-running` 请求中：
 用户打开 invitation 链接后，平台必须能返回：
 
 - 邀请是否有效
-- 目标邮箱
+- 目标登录标识（优先展示 `loginUsername`，必要时再展示 `targetEmail`）
 - 目标 workspace
 - 目标 role
 - 是否已消费 / 已撤销 / 已过期
@@ -420,14 +430,15 @@ RM 的 `ensure-running` 请求中：
 - 再写入短期 pending invitation 会话
 - 再创建或换取 Authentik enrollment flow URL
 - `start` 必须幂等
-- 前端在跳转前应明确提示用户当前账号可能与邀请邮箱不一致的风险
+- 前端在跳转前应明确提示用户当前账号可能与邀请目标账号不一致的风险
+- 对无真实邮箱用户，前端默认优先提示“请使用管理员提供的用户名登录”，不把代理邮箱作为主说明文案
 
 ### 8.4 邀请完成
 
 Authentik 完成 enrollment / login 后：
 
 - ClawLoops 必须以当前 `subjectId` 关联用户
-- `post-login` 阶段执行邮箱强校验
+- `post-login` 阶段执行身份邮箱槽位强校验
 - 完成目标 workspace / role 绑定
 - 标记 invitation `consumed`
 - 后续同一 token 不再可用
@@ -440,7 +451,7 @@ Authentik 完成 enrollment / login 后：
 - token 已过期
 - token 已撤销
 - token 已消费
-- 当前登录用户与 invitation 目标邮箱不一致
+- 当前登录用户的身份邮箱槽位与 invitation `targetEmail` 不一致
 - invitation 指向的 workspace 不存在或已关闭
 
 ---
@@ -492,7 +503,7 @@ Authentik 完成 enrollment / login 后：
 4. 用户在 Authentik 中完成资料和密码设置
 5. Authentik 登录成功后回到 ClawLoops
 6. 模块 1 调 `/internal/users/sync`
-7. 模块 1 执行邮箱强校验
+7. 模块 1 执行身份邮箱槽位强校验
 8. 模块 2 根据 pending invitation 幂等完成绑定
 9. 若 `appRole=admin` 则进入 `/admin`；否则进入 `/app`，由模块 6 承接首次使用
 
@@ -527,7 +538,7 @@ Authentik 完成 enrollment / login 后：
 | 409 | `INVITATION_ALREADY_CONSUMED` | invitation 已使用 |
 | 409 | `INVITATION_REVOKED` | invitation 已撤销 |
 | 410 | `INVITATION_EXPIRED` | invitation 已过期（派生值） |
-| 422 | `INVITATION_EMAIL_MISMATCH` | 当前接入邮箱与邀请目标不匹配 |
+| 422 | `INVITATION_EMAIL_MISMATCH` | 当前接入身份邮箱槽位与邀请目标不匹配；目标可为真实邮箱或代理邮箱 |
 | 422 | `INVITATION_WORKSPACE_INVALID` | invitation 指向的 workspace 无效 |
 | 409 | `RUNTIME_ACTION_CONFLICT` | runtime 状态冲突或命中多个容器 |
 | 409 | `RUNTIME_CONTRACT_DRIFT` | 容器 contract drift |
@@ -607,12 +618,12 @@ Authentik 完成 enrollment / login 后：
 ### Users
 
 - `subject_id` → **UNIQUE NOT NULL**
-- `email` → **UNIQUE NOT NULL（lowercase 规范化）**
+- `email` → **UNIQUE NOT NULL（lowercase 规范化）；可为真实邮箱或代理邮箱**
 
 ### Invitations
 
 - `invite_token_hash` → **UNIQUE NOT NULL**
-- `target_email` → **NOT NULL（lowercase）**
+- `target_email` → **NOT NULL（lowercase）；可为真实邮箱或代理邮箱**
 - `status` → 不存储 `expired`，仅存：
   - `pending | consumed | revoked`
 - `expires_at` → 必填
@@ -712,7 +723,7 @@ POST /api/v1/auth/post-login
 
 ```text
 IF 有 pending invitation:
-    校验 email 匹配
+    校验身份邮箱槽位匹配
     创建 / 更新 membership
     标记 invitation = consumed（原子或补偿）
 ```
@@ -767,6 +778,11 @@ X-authentik-uid
 X-authentik-email
 X-authentik-username
 ```
+
+补充约束：
+
+- `X-authentik-email` 仍是首版唯一邮箱槽位输入，即使该值是代理邮箱也必须透传
+- 无真实邮箱用户的前端体验应优先展示 `X-authentik-username` 对应的登录名，而不是强制展示代理邮箱
 
 ### 禁止
 
@@ -850,7 +866,7 @@ IF membership 创建成功但 invitation 未标记：
 4. post-login 重试：不重复写入
 5. expired token：返回 `EXPIRED`
 6. revoked token：返回 `REVOKED`
-7. email mismatch：返回 `EMAIL_MISMATCH`
+7. identity email slot mismatch：返回 `EMAIL_MISMATCH`
 8. disabled user：登录后拒绝访问
 
 ---
@@ -905,6 +921,6 @@ compatPortOnly = 18790
 
 ---
 
-v0.10-用户自然走完修订
+v0.11-无真实邮箱用户友好修订
 reno  
 2026-03-25 16:05

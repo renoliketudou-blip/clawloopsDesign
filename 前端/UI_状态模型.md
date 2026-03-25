@@ -39,7 +39,7 @@
 - 不从前端拼装 `userId`、`subjectId` 作为鉴权输入
 - 不把 `browserUrl` 直接当可访问条件，必须先看 `workspace-entry.ready`
 - 不把 `task.status`、`observedState`、`ready` 混成一个状态
-- 不把 invitation 邮箱校验前移到前端判断
+- 不把 invitation 账号匹配校验前移到前端判断
 - 不直接调用 `/internal/*`
 - 不直接请求 Authentik API 获取业务状态
 - 不把纯中转页当成普通用户登录后的默认落点
@@ -107,7 +107,8 @@
 {
   "valid": true,
   "invitation": {
-    "targetEmail": "user@example.com",
+    "targetEmail": "emp001@noemail.local",
+    "loginUsername": "emp001",
     "workspaceId": "ws_001",
     "workspaceName": "Design Team",
     "role": "workspace_member",
@@ -122,7 +123,9 @@
 - `status` 只认 `pending | consumed | revoked`
 - `expired` 不在字段中单独出现，来源于接口错误码
 - 预览页只展示，不做业务消费
-- 若当前浏览器已有登录态，页面必须同时展示当前账号与邀请目标邮箱
+- 若当前浏览器已有登录态，页面必须同时展示当前账号与邀请目标账号
+- 若存在 `loginUsername`，页面必须优先把它作为“推荐登录账号”展示
+- 若 `targetEmail` 是代理邮箱，普通用户界面不应把它作为主说明文案
 - 若两者看起来不一致，前端必须把它做成可操作流程，至少提供“切换账号后继续接入”“返回登录入口”“联系管理员”
 
 ### 3.4 PostLoginResult
@@ -320,8 +323,8 @@
 
 | 当前状态 | 事件 | 下一状态 | UI 行为 |
 | --- | --- | --- | --- |
-| `loadingPreview` | 预览成功且 `valid=true` | `previewValid` | 展示邮箱、workspace、角色、有效期 |
-| `previewValid` | 当前浏览器已有登录态且看起来与邀请邮箱不一致 | `previewAccountMismatchRisk` | 展示当前账号、邀请邮箱与“切换账号后继续接入”主 CTA |
+| `loadingPreview` | 预览成功且 `valid=true` | `previewValid` | 展示推荐登录账号、workspace、角色、有效期 |
+| `previewValid` | 当前浏览器已有登录态且看起来与邀请目标账号不一致 | `previewAccountMismatchRisk` | 展示当前账号、推荐登录账号与“切换账号后继续接入”主 CTA |
 | `loadingPreview` | 404/409/410/422 | `previewInvalid` | 渲染不可继续页面 |
 | `previewValid` | 点击继续接入 | `starting` | 按钮禁用，显示提交中 |
 | `previewAccountMismatchRisk` | 用户选择返回登录入口或切换账号 | `previewValid` | 切换账号后重新回到 invitation 预览页 |
@@ -371,7 +374,7 @@
 
 | code | 页面态 |
 | --- | --- |
-| `INVITATION_EMAIL_MISMATCH` | 当前登录邮箱与邀请邮箱不匹配，提供“切换账号后继续接入”“返回登录入口”动作 |
+| `INVITATION_EMAIL_MISMATCH` | 当前登录账号与邀请目标账号不匹配，提供“切换账号后继续接入”“返回登录入口”动作 |
 | `INVITATION_REVOKED` | 邀请已失效 |
 | `INVITATION_ALREADY_CONSUMED` | 邀请已被消费，但可继续登录收口 |
 | `INVITATION_EXPIRED` | 邀请已过期 |
@@ -551,6 +554,7 @@
 
 - `invitationId`
 - `targetEmail`
+- `loginUsername`
 - `workspaceId`
 - `role`
 - `status`
@@ -645,7 +649,7 @@ type AppError = {
 | `INVITATION_ALREADY_CONSUMED` | invitation 已使用页 |
 | `INVITATION_REVOKED` | invitation 已撤销页 |
 | `INVITATION_EXPIRED` | invitation 已过期页 |
-| `INVITATION_EMAIL_MISMATCH` | post-login 邮箱不匹配页，并提供“切换账号后继续接入”“返回登录入口”动作 |
+| `INVITATION_EMAIL_MISMATCH` | post-login 账号不匹配页，并提供“切换账号后继续接入”“返回登录入口”动作 |
 | `INVITATION_WORKSPACE_INVALID` | 工作区无效页 |
 | `INVITATION_ERROR` | invitation 系统错误页 |
 | `USER_SYNC_ERROR` | 登录收口失败页 |
@@ -675,6 +679,6 @@ type AppError = {
 
 若后端实现与本文不一致，以后端三份冻结文档中的同名字段和错误码为准，但不得突破本文列出的前端边界。
 
-v0.3 用户自然走完修订
+v0.4 无真实邮箱用户友好修订
 reno  
 2026-03-25 16:05
