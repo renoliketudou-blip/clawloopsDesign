@@ -64,10 +64,11 @@
 - Authentik 负责身份、密码、会话、enrollment flow
 - Authentik Groups 负责应用级角色输入
 - ClawLoops 负责 `workspace membership / invitation / runtime` 业务真相
-- Traefik + Outpost 负责前置鉴权
+- Traefik + Outpost 负责受保护业务入口的前置鉴权
 - 首版只启用本地账号密码
 - 邀请链接走“平台 token + enrollment flow”模式
 - 身份侧 invitation 在 `start` 阶段延迟创建，不在管理员创建 invitation 时预生成
+- `/invite/{token}` 与 invitation preview / start 必须保持公开，不能先被默认登录流截走
 - 后端读取 `X-Authentik-Groups`，命中 `clawloops-admins` 时把应用内角色设为 `admin`
 - Orchestrator 对用户侧暴露异步任务
 - RuntimeManager 对内部执行层暴露同步接口
@@ -223,6 +224,23 @@ networks:
 6. Proxy Provider
 7. Proxy Outpost
 
+### 6.1 管理员一次性手动配置清单
+
+管理员至少手动做一次下面这些配置：
+
+1. 在 Authentik 中创建或导入 `ClawLoops Enrollment Flow`
+2. 确认它的 stage 顺序为 `Invitation Stage -> Prompt Stage -> User Write Stage -> User Login Stage`
+3. 记录该 flow 的稳定标识，首版统一使用 `slug`
+4. 在 ClawLoops API 配置中写入 `AUTHENTIK_ENROLLMENT_FLOW_SLUG`
+5. 重启 `clawloops-api`
+6. 验证 `POST /api/v1/public/invitations/{token}/start` 返回的 `redirectUrl` 指向该 `slug`，而不是 `default-authentication-flow`
+
+冻结要求：
+
+- 这是平台部署期的一次性管理员配置，不是最终用户操作
+- `slug` 必须稳定；一旦改名，需同步更新平台配置
+- 首版禁止依赖“只在 Authentik UI 里看起来存在这个 flow，但平台并未显式引用”的隐式绑定
+
 ---
 
 ## 7. 登录流怎么配
@@ -342,6 +360,7 @@ https://clawloops.example.com/invite/{platform_token}
 - 链接是否有效
 - 一个“继续接入”按钮
 - 若用户属于无真实邮箱场景，不把代理邮箱作为主文案暴露给普通用户
+- 这一页必须是公开页，不能先被 Traefik / Forward Auth 送去普通登录流
 
 #### 第三步：前端点继续接入
 
@@ -352,6 +371,19 @@ https://clawloops.example.com/invite/{platform_token}
 3. 写入 pending invitation cookie / session
 4. 延迟创建或换取 Authentik enrollment URL
 5. 返回 `redirectUrl`
+
+公开性规则：
+
+- `GET /api/v1/public/invitations/{token}` 与 `POST /api/v1/public/invitations/{token}/start` 必须允许匿名访问
+- 这两个入口只承载 invitation 预览、token 校验与 enrollment 跳转，不承载后台或工作区能力
+- 允许浏览器里已经存在登录态，但不能要求用户先通过默认登录流后才能进入 invitation 承接页
+
+显式绑定规则：
+
+- `start` 在生成 `redirectUrl` 时，必须显式引用 `AUTHENTIK_ENROLLMENT_FLOW_SLUG`
+- 若 Authentik 侧创建 invitation 或 enrollment URL 的接口支持直接指定 flow，则必须显式传入该 flow
+- 若 `AUTHENTIK_ENROLLMENT_FLOW_SLUG` 缺失、配置错误、或对应 flow 不存在，`start` 必须直接失败
+- 首版禁止静默回退到 `default-authentication-flow`
 
 #### 第四步：跳转到 Authentik enrollment flow
 
@@ -387,6 +419,8 @@ Enrollment Flow 建议顺序：
 - `start` 必须幂等
 - 同一浏览器会话只保留一个有效 pending invitation session
 - pending session TTL 建议 10–30 分钟
+- `start` 必须显式绑定 `AUTHENTIK_ENROLLMENT_FLOW_SLUG`
+- `start` 配置错误时直接报错，不允许把用户悄悄送到普通登录流
 - `post-login` 必须幂等
 - 同一 `invitationId + userId` 只能成功消费一次
 - `consume invitation` 与 `workspace membership binding` 必须原子，或定义清晰补偿逻辑
@@ -447,6 +481,8 @@ Enrollment Flow 建议顺序：
 - 用户业务状态（active / disabled）
 - 应用级角色映射策略（例如 `clawloops-admins -> admin`）
 - invitation 的业务有效性
+- `AUTHENTIK_ENROLLMENT_FLOW_SLUG` 这类平台配置真相
+- `start -> enrollment flow` 的显式引用绑定
 - workspace / workspaceRole 绑定
 - runtime 资源真相
 - quota / usage / 模型治理
@@ -491,9 +527,10 @@ Enrollment Flow 建议顺序：
 
 ### 11.2 目标效果
 
-- 用户访问平台或 workspace 时，先过 Authentik
+- 用户访问受保护平台页或 workspace 时，先过 Authentik
 - 未登录就被送去登录
 - 已登录才进入应用
+- 邀请承接页不会被普通登录流截胡
 - 业务层还要再检查用户状态与归属
 
 ### 11.3 典型思路
@@ -515,7 +552,11 @@ http:
           - X-Authentik-Groups
 ```
 
-然后平台主域名和所有 workspace 子域名都挂这个 middleware。
+然后：
+
+- 平台主域名下的受保护业务路由挂这个 middleware，例如 `/app`、`/admin`、受保护 API
+- 所有 workspace 子域名都挂这个 middleware
+- `/invite/{token}`、公开 invitation API、`/outpost.goauthentik.io/*` 不挂这个 middleware
 
 ### 11.4 你的应用层要做什么
 
@@ -540,6 +581,9 @@ http:
 
 - 所有 workspace 子域名必须统一经过 Traefik + Authentik Forward Auth
 - `browserUrl` 属于受保护入口，不是匿名公开地址
+- `/invite/{token}`、`GET /api/v1/public/invitations/{token}`、`POST /api/v1/public/invitations/{token}/start` 必须保持公开，否则会错误落入 `default-authentication-flow`
+- 公开 invitation 路由只允许承载 token 校验、预览和 enrollment 跳转，不允许承载后台或工作区能力
+- `start` 必须显式绑定 `AUTHENTIK_ENROLLMENT_FLOW_SLUG`；缺失时返回配置错误
 - 前端只有在 `ready=true` 时才允许跳转
 - `admin` 登录后默认进入 `/admin`
 - `workspace-entry` 只负责非管理员用户的工作区跳转
@@ -643,6 +687,12 @@ POST /api/v1/public/invitations/{token}/start
 POST /api/v1/auth/post-login
 ```
 
+平台配置要求：
+
+- `clawloops-api` 必须持有 `AUTHENTIK_ENROLLMENT_FLOW_SLUG`
+- `start` 使用该配置生成 enrollment 跳转
+- 若该配置缺失或 flow 不存在，返回 invitation 配置错误，不得回退默认流
+
 ### 13.2 管理员接口
 
 ```text
@@ -741,7 +791,7 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 
 做：
 
-1. 平台域名挂 forward auth
+1. 平台主域名下受保护业务路由挂 forward auth，公开 invitation 路由不挂
 2. workspace 子域名挂 forward auth
 3. `/outpost.goauthentik.io/*` 路由放行到 outpost
 4. 验证 header 是否透传到应用
@@ -766,7 +816,7 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 1. 首次管理员能初始化成功
 2. 登录页只有本地密码
 3. invitation 可创建
-4. invitation 链接一次性有效
+4. invitation 链接一次性有效，且不会先落入普通密码登录页
 5. 用户完成接入后能绑定 workspace / workspaceRole
 6. `start` 与 `post-login` 可安全重复调用
 7. workspace 子域名会被 Authentik 保护
@@ -796,6 +846,7 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 - 邀请制接入
 - 平台保持 workspace membership 业务真相
 - 所有 workspace 子域名必须经过 Traefik + Authentik Forward Auth
+- 平台主域名下只有受保护业务路由挂 forward auth，公开 invitation 路由保持匿名可达
 - Orchestrator 对外异步返回 taskId
 - RuntimeManager internal API 同步执行
 
@@ -811,7 +862,7 @@ GET  /internal/runtime-manager/containers/{runtimeId}
 9. 保持现有 runtime 对外接口主体不变，但删除改为 POST /runtime/delete
 10. 把 subjectId/authProvider/authMethod 接入用户同步
 11. 解析 `X-Authentik-Groups` 并实现 `clawloops-admins -> admin`
-12. 在 Traefik 上为平台域名和 workspace 子域名挂 Authentik forward auth
+12. 在 Traefik 上为平台受保护业务路由和 workspace 子域名挂 Authentik forward auth，但保留公开 invitation 路由匿名可达
 13. RuntimeManager V1 请求体删除 imageRef，compat 必填
 14. 固定 runtime 网络为 clawloops_shared，固定 internalEndpoint 为 http://rt-<runtimeId>:18789
 15. 增加 RUNTIME_CONTRACT_DRIFT / RUNTIME_START_FAILED / RUNTIME_STOP_FAILED / RUNTIME_DELETE_FAILED

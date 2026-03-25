@@ -22,6 +22,7 @@
 - 首版只开放 **本地账号密码**
 - 无真实邮箱用户允许使用“用户名 + 代理邮箱槽位”接入，且前端体验必须优先围绕用户名展开
 - 所有 workspace 子域名继续统一经 **Traefik + Authentik Proxy Outpost + Forward Auth** 做前置鉴权
+- 平台主域名下的 invitation 承接入口保持公开，不先走默认登录流
 - 普通用户接入采用 **邀请制**
 - 首版 invitation 采用 **双层模型 + 延迟创建**
 - 首版 runtime 采用 **固定镜像 + 固定命令 + 固定端口 + 固定 alias + `compat` 必填** 的冻结契约
@@ -130,7 +131,8 @@ Authentik 非常适合承接第一层；ClawLoops 承接第二层。这样职责
 首版采用以下组合：
 
 - 平台控制面与 workspace 子域名统一由 Traefik 暴露
-- Traefik 通过 Authentik Proxy Provider 的 **Forward Auth** 中间件做前置鉴权
+- Traefik 通过 Authentik Proxy Provider 的 **Forward Auth** 中间件保护受保护业务路由
+- `/invite/{token}`、invitation preview、invitation start 这些 invitation 承接入口保持公开
 - Authentik 当前只启用 **本地用户名优先登录（兼容邮箱输入）+ 密码** 登录
 - 管理员在 ClawLoops 后台创建 invitation，ClawLoops 保存业务邀请码对象
 - ClawLoops 在用户调用 `/start` 时延迟创建或换取 Authentik enrollment invitation
@@ -260,6 +262,8 @@ Authentik 负责执行身份侧 enrollment：
 - **Authentik `itoken` 是身份执行入口**
 - 对外永远发 `https://clawloops.example.com/invite/{platform_token}`
 - 不直接把 Authentik 原始 `itoken` 当成业务链接对外发送
+- `start` 生成 `redirectUrl` 时必须显式引用平台配置的 `AUTHENTIK_ENROLLMENT_FLOW_SLUG`
+- 首版禁止在该配置缺失时静默回退到 `default-authentication-flow`
 
 ### 7.6 “首次免密码链接进入”如何解释最合理
 
@@ -285,6 +289,7 @@ Authentik 负责执行身份侧 enrollment：
 - 该 session 必须具备 TTL（建议 10–30 分钟）
 - 只绑定当前浏览器会话
 - `start` 必须幂等：重复调用只复用一个有效 pending invitation session，不应生成多个并发会话
+- `start` 若发现 `AUTHENTIK_ENROLLMENT_FLOW_SLUG` 缺失、错误或对应 flow 不存在，必须直接返回配置错误
 
 ### 7.9 撤销、过期、消费的联动规则
 
@@ -445,7 +450,8 @@ ClawLoops 明确禁止：
 
 | 路由 | 示例 | 鉴权方式 |
 | --- | --- | --- |
-| 平台控制面 | `https://clawloops.example.com` | Traefik + Authentik |
+| 平台受保护业务入口 | `https://clawloops.example.com/app`、`https://clawloops.example.com/admin` | Traefik + Authentik |
+| 平台公开邀请入口 | `https://clawloops.example.com/invite/{token}`、公开 invitation API | 平台 token 校验，不走 Forward Auth |
 | 工作区入口 | `https://u-001.clawloops.example.com` | Traefik + Authentik Forward Auth |
 | Outpost 回调路径 | `/outpost.goauthentik.io/*` | 由 Outpost 直接处理 |
 
@@ -454,7 +460,21 @@ ClawLoops 明确禁止：
 - `browserUrl` 不是匿名公开地址
 - 知道 URL 不等于可以访问
 - 所有 workspace 子域名必须统一经过 Traefik + Authentik Forward Auth
+- invitation 承接入口必须保持公开，否则会被错误送入普通登录流
+- invitation 承接入口虽然公开，但仍必须通过平台 token 和后端状态校验
 - ClawLoops 仍需在业务层检查用户状态、workspace 归属和 runtime 状态
+
+### 11.4 管理员一次性配置要求
+
+管理员在部署期至少手动完成一次：
+
+1. 在 Authentik 中创建或导入 `ClawLoops Enrollment Flow`
+2. 固定其 `slug`
+3. 在 `clawloops-api` 配置 `AUTHENTIK_ENROLLMENT_FLOW_SLUG=<该 slug>`
+4. 重启 API 服务
+5. 用测试 invitation 验证 `start` 返回的 `redirectUrl` 命中该 flow
+
+这属于平台一次性配置，不属于最终用户操作。
 
 ---
 

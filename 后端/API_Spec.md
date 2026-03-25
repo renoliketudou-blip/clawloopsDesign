@@ -47,6 +47,7 @@
 | 422 | `INVITATION_EMAIL_MISMATCH` | 当前认证身份邮箱槽位与 invitation `targetEmail` 不匹配；目标可为真实邮箱或代理邮箱 |
 | 422 | `INVITATION_WORKSPACE_INVALID` | invitation 指向的 workspace 无效 |
 | 422 | `QUOTA_EXCEEDED` | 超出 quota |
+| 500 | `INVITATION_CONFIG_ERROR` | invitation enrollment flow 平台配置缺失、flow 标识错误，或目标 flow 不存在 |
 | 500/502 | `INVITATION_ERROR` | invitation 流程执行失败或上游身份流程失败 |
 | 500/502 | `USER_SYNC_ERROR` | 用户同步失败 |
 | 500/502 | `RUNTIME_START_FAILED` | runtime 创建、权限初始化或启动探测失败 |
@@ -72,6 +73,8 @@
 - `itoken` 只应出现在 Authentik enrollment URL 中，不对外作为业务主 token
 - 首版统一采用 **延迟创建模式**：创建 invitation 时只生成 ClawLoops 业务 token；用户调用 `/start` 时再创建或换取 Authentik invitation / enrollment URL
 - 首版禁止混用“提前创建”和“延迟创建”两种模式
+- `start` 生成 enrollment 跳转时必须显式引用 `AUTHENTIK_ENROLLMENT_FLOW_SLUG`
+- 该配置缺失时返回 `INVITATION_CONFIG_ERROR`，不得回退到 `default-authentication-flow`
 
 ### 3.3 invitation 状态真相
 
@@ -301,6 +304,11 @@ POST `/api/v1/auth/post-login`
 
 ## 6. 公开 invitation 接口
 
+冻结规则：
+
+- `/invite/{token}`、`GET /api/v1/public/invitations/{token}`、`POST /api/v1/public/invitations/{token}/start` 必须保持公开，不走 Authentik Forward Auth
+- 这些入口只接受平台 token，不承载后台或工作区能力
+
 ### 6.1 查看 invitation 预览
 
 GET `/api/v1/public/invitations/{token}`
@@ -337,6 +345,13 @@ GET `/api/v1/public/invitations/{token}`
 ### 6.2 启动 invitation 接入流程
 
 POST `/api/v1/public/invitations/{token}/start`
+
+冻结规则：
+
+- `clawloops-api` 必须持有 `AUTHENTIK_ENROLLMENT_FLOW_SLUG`
+- `start` 必须用该配置生成 enrollment `redirectUrl`
+- 若配置缺失、错误或目标 flow 不存在，直接返回 `INVITATION_CONFIG_ERROR`
+- 禁止静默回退到 `default-authentication-flow`
 
 **成功示例**：
 
@@ -725,6 +740,7 @@ POST `/internal/usage/records`
 
 | Authentik / 上游场景 | ClawLoops 错误码 |
 | --- | --- |
+| enrollment flow slug 缺失 / 错误 / flow 不存在 | `INVITATION_CONFIG_ERROR` |
 | enrollment flow 执行失败 / invitation 无法生成 | `INVITATION_ERROR` |
 | 用户创建成功但同步失败 | `USER_SYNC_ERROR` |
 | 用户中断 flow / 会话丢失 | `INVITATION_ERROR` |

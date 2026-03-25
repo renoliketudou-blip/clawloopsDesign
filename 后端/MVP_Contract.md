@@ -247,6 +247,10 @@
 - 可重复调用，但只产生一个有效 pending invitation 会话
 - pending invitation session 需绑定当前浏览器会话并具备 TTL（建议 10–30 分钟）
 - `start` 不直接消费 invitation
+- `/invite/{token}`、`GET /api/v1/public/invitations/{token}`、`POST /api/v1/public/invitations/{token}/start` 必须保持公开，不走 Forward Auth
+- 公开 invitation 路由只依赖平台 token 校验，不承载后台或工作区能力
+- `start` 必须显式绑定平台配置的 `AUTHENTIK_ENROLLMENT_FLOW_SLUG`
+- 若该配置缺失、错误或目标 flow 不存在，直接返回 invitation 配置错误，不得回退默认登录流
 
 ### 6.8 runtime 启动前置条件
 
@@ -499,7 +503,7 @@ Authentik 完成 enrollment / login 后：
 
 1. 用户打开 `/invite/{token}`
 2. 模块 2 校验 invitation
-3. 模块 1 生成跳转到 Authentik enrollment flow 的入口
+3. 模块 1 使用 `AUTHENTIK_ENROLLMENT_FLOW_SLUG` 显式生成跳转到 Authentik enrollment flow 的入口
 4. 用户在 Authentik 中完成资料和密码设置
 5. Authentik 登录成功后回到 ClawLoops
 6. 模块 1 调 `/internal/users/sync`
