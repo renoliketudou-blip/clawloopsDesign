@@ -24,6 +24,8 @@
 - 管理后台左侧导航固定，不做自定义排序
 - 管理后台认证依赖平台 session，而不是外部 IAM
 - 若命中首登强制改密，管理员不得先进入后台壳层
+- 管理后台前端不读取、不管理 `clawloops_session`
+- 管理后台前端不调用 `/internal/*`，包括 `/internal/auth/workspace-access`
 
 ---
 
@@ -80,6 +82,7 @@
 - 当前页高亮必须稳定
 - 后台内部切换不丢失壳层
 - 非 admin 用户误入 `/admin/*` 统一进入 403 无权限页
+- 命中 `PASSWORD_CHANGE_REQUIRED` 时，不得渲染后台壳层主内容，必须立即跳 `/force-password-change`
 
 ---
 
@@ -103,6 +106,8 @@
 
 - 不根据其他接口自行拼摘要
 - 不把 `/admin` 当成过渡页
+- 不读取 session cookie 判断是否登录
+- 不通过任何 `/internal/*` 接口预判 workspace 或后台权限
 
 ---
 
@@ -121,6 +126,9 @@
 - 列表页负责高频动作
 - 详情页负责查看完整信息
 - 创建成功后必须能直接复制 `inviteUrl`
+- invitation 列表与详情只把 `pending / consumed / revoked` 视为状态真相
+- `expired` 只作为时间语义理解，不要求前端额外造一个库存状态
+- 当用户侧 `accept` 命中 `replayed=true` 时，后台仍只把该 invitation 视为已稳定消费，不需要额外“重复提交异常”状态
 
 ### 6.3 用户治理
 
@@ -136,6 +144,8 @@
 - 后台找回密码入口
 - 外部身份源管理页
 - 外部 IAM 配置页
+- 后台前端自管 session cookie 生命周期
+- 后台前端直连 workspace 网关鉴权接口
 
 ---
 
@@ -146,6 +156,7 @@
 1. 后台完全建立在平台 session 之上
 2. 首登强制改密页在后台壳层之外，改完后才进入后台首页
 3. 后台首页、用户治理和 invitation 治理不再依赖任何外部认证流程
+4. 后台前端不感知 `clawloops_session` 细节，也不调用任何 `/internal/*` 鉴权入口
 
 ---
 
