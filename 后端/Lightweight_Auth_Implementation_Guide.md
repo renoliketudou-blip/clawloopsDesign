@@ -38,7 +38,7 @@
 - invitation 接入页直接在站内完成首次设密
 - workspace 子域通过平台 session 鉴权中间层保护
 - 首版只开本地账号密码
-- 首版不做改密
+- 种子管理员默认密码固定为 `admin`，首次登录必须强制改密
 - 首版不做找回密码
 
 ---
@@ -50,10 +50,12 @@
 不依赖外部 IAM
 只做本地账号密码
 管理员由平台初始化脚本创建
+种子管理员初始密码固定为 admin
+种子管理员首次登录后必须立刻改密
 普通用户通过 invitation 首次设密进入
 平台 session 是唯一登录真相
 workspace 子域受平台 session 保护
-不做改密
+不做通用改密
 不做找回密码
 RuntimeManager internal API 仍同步执行
 Orchestrator 对外仍异步返回 taskId
@@ -186,9 +188,37 @@ Orchestrator 对外仍异步返回 taskId
 2. 校验 `status`
 3. 校验 `password_hash`
 4. 创建 session
-5. 返回当前用户信息与 `redirectTo`
+5. 若 `mustChangePassword=true`，返回 `redirectTo=/force-password-change`
+6. 否则返回当前用户信息与正常 `redirectTo`
 
-### 5.2 退出接口
+### 5.2 首登强制改密接口
+
+建议接口：
+
+- `POST /api/v1/auth/password/change`
+
+建议请求体：
+
+```json
+{
+  "currentPassword": "admin",
+  "newPassword": "admin#2026!new",
+  "newPasswordConfirm": "admin#2026!new"
+}
+```
+
+服务端步骤：
+
+1. 校验当前 session
+2. 只允许修改当前登录用户自己的密码
+3. 校验 `currentPassword`
+4. 校验 `newPassword` 与 `newPasswordConfirm`
+5. 拒绝与当前密码相同的新密码
+6. 更新 `password_hash`
+7. 清除 `mustChangePassword`
+8. 返回 `redirectTo=/admin`
+
+### 5.3 退出接口
 
 建议接口：
 
@@ -200,7 +230,7 @@ Orchestrator 对外仍异步返回 taskId
 2. 标记 `revoked_at`
 3. 清理 cookie
 
-### 5.3 当前用户接口
+### 5.4 当前用户接口
 
 建议接口：
 
@@ -211,6 +241,7 @@ Orchestrator 对外仍异步返回 taskId
 
 - `/auth/me` 给前端当前登录身份
 - `/auth/access` 给前端当前用户是否还能进入业务
+- 若 `mustChangePassword=true`，前端必须把用户收口到 `/force-password-change`
 
 ---
 
@@ -317,9 +348,18 @@ Orchestrator 对外仍异步返回 taskId
 
 - 直接展示用户名和密码输入框
 - 提交到 `POST /api/v1/auth/login`
-- 成功后按 `redirectTo` 进 `/app` 或 `/admin`
+- 若命中种子管理员首登，成功后先按 `redirectTo` 进 `/force-password-change`
+- 其他场景再进入 `/app` 或 `/admin`
 
-### 8.2 `/invite/:token`
+### 8.2 `/force-password-change`
+
+新页面职责：
+
+- 只给已登录且 `mustChangePassword=true` 的用户访问
+- 强制提交当前密码与新密码
+- 成功后进入 `/admin`
+
+### 8.3 `/invite/:token`
 
 旧方案：
 
@@ -334,7 +374,7 @@ Orchestrator 对外仍异步返回 taskId
 - 提交 `POST /api/v1/public/invitations/{token}/accept`
 - 成功后直接进入 `/app`
 
-### 8.3 删除 `/post-login`
+### 8.4 删除 `/post-login`
 
 旧方案有它，是因为登录与业务绑定分两段。
 
@@ -397,7 +437,7 @@ Orchestrator 对外仍异步返回 taskId
 
 ## 11. 首版明确不做
 
-- 改密
+- 通用改密
 - 找回密码
 - 邮箱验证码
 - 多因素认证
@@ -448,7 +488,7 @@ Orchestrator 对外仍异步返回 taskId
 2. **平台自己负责 invitation 业务真相和 workspace/workspaceRole 绑定**
 3. **Traefik + 平台自有鉴权中间层负责统一前置鉴权**
 4. **首版只做本地密码**
-5. **首版不做改密**
+5. **种子管理员默认密码为 `admin`，首次登录必须先改密**
 6. **首版不做找回密码**
 7. **把 invitation 链接定义成一次性首设密码入口**
 8. **把管理员首页与工作区跳转分开：`admin` 默认进 `/admin`，非管理员用户默认进 `/app`**

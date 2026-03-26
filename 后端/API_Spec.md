@@ -5,7 +5,7 @@
 | 文档定位 | 接口与字段基线 |
 | --- | --- |
 | 适用范围 | 用户侧 / 管理员侧 / 公开 invitation 入口 / 内部服务侧 / Runtime Manager 内部接口 |
-| 修订重点 | 冻结登录与 invitation 接受接口、统一 session 语义、删除外部 IAM 依赖，并明确首版不做改密与找回密码 |
+| 修订重点 | 冻结登录与 invitation 接受接口、统一 session 语义、删除外部 IAM 依赖，并补充种子管理员首登强制改密流程 |
 | 响应原则 | 所有响应均采用 JSON；字段名直接作为开发基线，不再自行改名 |
 | 当前版本 | v0.12-lightweight-auth |
 
@@ -22,7 +22,7 @@
 | internal 鉴权 | internal API 必须通过服务间鉴权（如 mTLS 或 internal token），并且禁止公网访问 |
 | disabled 语义 | 除 `/api/v1/auth/me` 外，disabled 用户访问业务接口统一返回 `403 USER_DISABLED`；但 `/api/v1/auth/access` 永远返回 `200`，仅用于状态判断 |
 | workspace 访问 | `browserUrl` 仅是受保护入口地址；所有 workspace 子域名必须统一经过平台 session 鉴权 |
-| 跳转规则 | `admin` 登录后默认进入 `/admin`；普通用户登录后默认进入 `/app`；非管理员用户只有在 `ready=true` 时才允许跳转到 `browserUrl` |
+| 跳转规则 | 种子管理员若 `mustChangePassword=true` 则登录后优先进入 `/force-password-change`；其他 `admin` 默认进入 `/admin`；普通用户默认进入 `/app`；非管理员用户只有在 `ready=true` 时才允许跳转到 `browserUrl` |
 | 字段命名 | 以本文件“字段冻结清单”为唯一基线，禁止别名漂移 |
 
 ---
@@ -35,6 +35,7 @@
 | 401 | `INVALID_CREDENTIALS` | 用户名或密码错误 |
 | 403 | `ACCESS_DENIED` | 权限不足 |
 | 403 | `USER_DISABLED` | 用户已禁用 |
+| 403 | `PASSWORD_CHANGE_REQUIRED` | 当前会话必须先完成强制改密 |
 | 404 | `USER_NOT_FOUND` | 用户不存在 |
 | 404 | `RUNTIME_NOT_FOUND` | 仅用于业务真相层 runtime 不存在；**不用于 RM 容器事实查询** |
 | 404 | `INVITATION_NOT_FOUND` | invitation 不存在 |
@@ -46,6 +47,7 @@
 | 410 | `INVITATION_EXPIRED` | invitation 已过期（由 `expiresAt < now` 推导，不单独落库存状态） |
 | 422 | `INVITATION_USERNAME_MISMATCH` | 当前接入用户名与 invitation 指定用户名不匹配 |
 | 422 | `INVITATION_PASSWORD_INVALID` | 首次设密不符合平台密码规则 |
+| 422 | `PASSWORD_CHANGE_INVALID` | 新密码不符合平台规则，或与当前密码不允许相同 |
 | 422 | `INVITATION_WORKSPACE_INVALID` | invitation 指向的 workspace 无效 |
 | 422 | `QUOTA_EXCEEDED` | 超出 quota |
 | 500 | `SESSION_ERROR` | session 建立、撤销或校验失败 |
@@ -62,6 +64,8 @@
 ### 3.1 管理员初始化口径
 
 - 首版通过平台初始化脚本或种子数据创建管理员账号
+- 种子管理员默认初始密码固定为 `admin`
+- 种子管理员首次登录前必须带 `mustChangePassword=true`
 - 文档统一使用“种子管理员账号”口径
 - 不再混用任何外部 IAM bootstrap 管理员概念
 
@@ -83,6 +87,8 @@
 
 - 首版普通登录固定为 **用户名优先登录 + 密码**
 - 首次接入固定为：**用户通过 invitation 链接进入站内接入页，提交初始密码，并由平台自动建立登录 session**
+- 种子管理员首次使用默认密码 `admin` 登录成功后，必须立刻跳转 `/force-password-change`
+- 在 `mustChangePassword=true` 期间，除 `/force-password-change` 与登出外，不允许继续访问其他业务页
 - 普通用户登录成功后的默认落点应为 `/app`
 - 首版普通用户只会绑定 0 或 1 个 workspace，不存在前端 workspace 选择分支
 
@@ -92,8 +98,14 @@
 
 - 平台保存密码明文
 - 平台暴露密码明文给前端或日志
-- 平台在首版新增改密 API
+- 平台开放任意可见的通用自助改密入口
 - 平台在首版新增找回密码 API
+
+首版唯一允许新增的改密能力：
+
+- `POST /api/v1/auth/password/change`
+- 仅允许已登录用户修改自己的当前密码
+- 首版前端只把它用于种子管理员首次登录后的强制改密
 
 ### 3.6 幂等要求
 
@@ -120,6 +132,7 @@
 | GET | `/api/v1/auth/options` | 获取当前登录方式与首版能力开关 | 公开 |
 | POST | `/api/v1/auth/login` | 用户名密码登录 | 公开 |
 | POST | `/api/v1/auth/logout` | 退出当前会话 | 用户 |
+| POST | `/api/v1/auth/password/change` | 修改当前登录用户密码（首版仅用于强制改密） | 用户 |
 | GET | `/api/v1/auth/me` | 获取当前登录用户 | 用户 |
 | GET | `/api/v1/auth/access` | 检查当前用户是否可访问业务（永远返回 200） | 用户 |
 | GET | `/api/v1/public/invitations/{token}` | 查看 invitation 预览信息 | 公开 |
@@ -160,7 +173,7 @@
 用途：
 
 - 告诉前端当前首版只支持哪种登录方式
-- 明确首版不支持改密、找回密码、第三方登录
+- 明确首版只开放强制改密、不开放找回密码与第三方登录
 
 示例响应：
 
@@ -174,7 +187,7 @@
     }
   ],
   "features": {
-    "passwordChange": false,
+    "forcedPasswordChange": true,
     "passwordRecovery": false,
     "thirdPartyLogin": false
   }
@@ -209,7 +222,9 @@
       "method": "local_password"
     },
     "isAdmin": false,
-    "isDisabled": false
+    "isDisabled": false,
+    "mustChangePassword": false,
+    "passwordChangeReason": null
   }
 }
 ```
@@ -217,10 +232,57 @@
 规则：
 
 - 成功时由服务端设置 session cookie
-- `admin` 返回 `redirectTo=/admin`
+- 当 `mustChangePassword=true` 时返回 `redirectTo=/force-password-change`
+- 非强制改密状态下，`admin` 返回 `redirectTo=/admin`
 - disabled 用户返回 `403 USER_DISABLED`
 
-### 5.3 `POST /api/v1/auth/logout`
+### 5.3 `POST /api/v1/auth/password/change`
+
+请求体：
+
+```json
+{
+  "currentPassword": "admin",
+  "newPassword": "admin#2026!new",
+  "newPasswordConfirm": "admin#2026!new"
+}
+```
+
+成功响应：
+
+```json
+{
+  "changed": true,
+  "redirectTo": "/admin",
+  "user": {
+    "userId": "u_admin",
+    "subjectId": "clawloops:u_admin",
+    "username": "admin",
+    "tenantId": "t_default",
+    "role": "admin",
+    "status": "active",
+    "auth": {
+      "provider": "clawloops",
+      "method": "local_password"
+    },
+    "isAdmin": true,
+    "isDisabled": false,
+    "mustChangePassword": false,
+    "passwordChangeReason": null
+  }
+}
+```
+
+规则：
+
+- 仅允许当前已登录用户修改自己的密码
+- 首版前端只在 `mustChangePassword=true` 时暴露该能力
+- `currentPassword` 必须校验通过
+- `newPassword` 不得与当前密码相同
+- 成功后必须更新密码哈希，并清除 `mustChangePassword`
+- 推荐同时轮换当前 session，避免继续使用旧认证上下文
+
+### 5.4 `POST /api/v1/auth/logout`
 
 成功响应：
 
@@ -235,7 +297,7 @@
 - 撤销当前 session
 - 清理浏览器侧 session cookie
 
-### 5.4 `GET /api/v1/auth/me`
+### 5.5 `GET /api/v1/auth/me`
 
 示例响应：
 
@@ -252,18 +314,25 @@
     "method": "local_password"
   },
   "isAdmin": false,
-  "isDisabled": false
+  "isDisabled": false,
+  "mustChangePassword": false,
+  "passwordChangeReason": null
 }
 ```
 
-### 5.5 `GET /api/v1/auth/access`
+说明：
+
+- `mustChangePassword=true` 时，前端必须把该用户收口到 `/force-password-change`
+- 首版该字段通常只会出现在种子管理员首次登录场景
+
+### 5.6 `GET /api/v1/auth/access`
 
 示例响应：
 
 ```json
 {
-  "allowed": true,
-  "reason": null
+  "allowed": false,
+  "reason": "PASSWORD_CHANGE_REQUIRED"
 }
 ```
 
@@ -271,6 +340,7 @@
 
 - 该接口永远返回 `200`
 - `allowed=false` 时由前端做禁用态或无权限态渲染
+- 当 `reason=PASSWORD_CHANGE_REQUIRED` 时，前端必须立刻跳转 `/force-password-change`
 
 ---
 
@@ -1019,7 +1089,7 @@
 | 命名漂移 | 不要把 `subjectId` 改成 `externalUid`；不要把 `invitationId` 改成 `inviteId` |
 | token 误用 | 平台 token 就是唯一 invitation 入口，不要再引入第二套 enrollment token |
 | 状态混用 | 不要把 `task.status`、`observedState`、`ready` 混成同一语义 |
-| 密码越权 | 首版不得新增改密 API 或找回密码 API |
+| 密码越权 | 首版不得新增通用改密 API 或找回密码 API；仅允许受限的首登强制改密接口 |
 | 登录方式漂移 | 首版不向前端开放 Google / GitHub / 企业 SSO 等入口 |
 | 地址混用 | 不要用一个 `endpoint` 同时表示 `browserUrl` 和 `internalEndpoint` |
 | RM 参数漂移 | 不要在 V1 RM 请求体重新加入 `imageRef / networkName / gatewayPort` |
@@ -1033,12 +1103,13 @@
 1. **登录统一走 `POST /api/v1/auth/login`**
 2. **Invitation 采用单层模型，`POST /api/v1/public/invitations/{token}/accept` 作为幂等接入入口**
 3. **`/auth/access` 永远返回 `200`，仅用于状态判断**
-4. **`admin` 登录后默认进入 `/admin`；普通用户登录后默认进入 `/app`；`workspace-entry` 是唯一工作区跳转入口**
+4. **非首登强制改密场景下，`admin` 登录后默认进入 `/admin`；普通用户登录后默认进入 `/app`；`workspace-entry` 是唯一工作区跳转入口**
 5. **runtime 删除改为 `POST /api/v1/users/me/runtime/delete`，不再依赖 DELETE body**
 6. **所有 workspace 子域名必须统一经过平台 session 鉴权**
 7. **RuntimeManager internal 接口同步执行，`taskId` 只存在于 Orchestrator 对外层**
 8. **V1 runtime 统一使用 `clawloops_shared`、`18789`、固定 alias 与固定镜像**
-9. **首版不做改密与找回密码**
+9. **种子管理员默认密码为 `admin`，首次登录必须先进入 `/force-password-change` 完成改密**
+10. **首版不做通用改密与找回密码**
 
 ---
 

@@ -14,7 +14,8 @@
 - 平台使用业务内轻量认证
 - 登录真相来自平台 session
 - invitation 在站内完成首次设密与接入
-- 首版不做改密与找回密码
+- 种子管理员首次登录后必须立刻强制改密
+- 首版不做通用改密与找回密码
 
 ---
 
@@ -54,6 +55,7 @@
 | 路由 | 页面名称 | 权限 | 初始化接口 | 主动作 |
 | --- | --- | --- | --- | --- |
 | `/login` | 登录入口页 | 公开 | `/api/v1/auth/options` | `/auth/login` |
+| `/force-password-change` | 首登强制改密页 | 已登录且 `mustChangePassword=true` | `/api/v1/auth/me` | `/auth/password/change` |
 | `/invite/:token` | invitation 接入页 | 公开 | `/api/v1/public/invitations/{token}` | `/accept` |
 | `/app` | 用户工作台 | 已登录且 allowed | `/auth/me`、`/auth/access`、`/users/me/runtime/status`、`/models` | start/stop/delete/open |
 | `/workspace-entry` | 工作区入口页 | 已登录且 allowed | `/auth/me`、`/auth/access`、`/workspace-entry` | 跳 workspace |
@@ -88,22 +90,45 @@
 - 登录入口文案以 `/auth/options.methods[0].label` 为准（当前固定为 `用户名优先登录`）
 - 对无真实邮箱用户，登录页辅助文案应明确“请优先使用管理员提供的用户名登录”
 - 不展示 Google、GitHub、企业 SSO 等入口
-- 不展示改密和找回密码入口
-- 若 `/auth/me` 已表明已登录，则按角色跳 `/admin` 或 `/app`
+- 不展示通用改密和找回密码入口
+- 若 `/auth/me` 已表明 `mustChangePassword=true`，则优先跳 `/force-password-change`
+- 否则按角色跳 `/admin` 或 `/app`
 
 点击“登录”流程：
 
 1. 收集 `username`
 2. 收集 `password`
 3. `POST /api/v1/auth/login`
-4. 成功后按 `redirectTo` 跳 `/admin` 或 `/app`
+4. 成功后按 `redirectTo` 跳 `/force-password-change`、`/admin` 或 `/app`
 
 前端职责：
 
 - 只负责展示表单、校验必填和错误态
 - 不负责持久化密码
 
-## 4.2 invitation 接入页 `/invite/:token`
+## 4.2 首登强制改密页 `/force-password-change`
+
+### 初始化流程
+
+1. `GET /api/v1/auth/me`
+2. 若 `mustChangePassword=false`，直接按角色跳回 `/admin` 或 `/app`
+
+### 页面展示规则
+
+- 该页不是后台导航页，不进入 `/admin` 壳层
+- 必须明确提示“当前为默认初始密码，需先修改后才能继续”
+- 必须提供当前密码、新密码、确认新密码三个输入项
+- 除 logout 外，不提供跳过入口
+
+### 点击“更新密码并继续”流程
+
+1. 收集 `currentPassword`
+2. 收集 `newPassword`
+3. 收集 `newPasswordConfirm`
+4. `POST /api/v1/auth/password/change`
+5. 成功后按 `redirectTo` 进入 `/admin`
+
+## 4.3 invitation 接入页 `/invite/:token`
 
 ### 初始化流程
 
@@ -188,6 +213,7 @@
 
 规则：
 
+- 若 `mustChangePassword=true`，不得进入该页，必须回 `/force-password-change`
 - 非 admin 用户统一进入 403 无权限页
 - `/admin` 不是中转页，必须是可用首页
 
@@ -220,15 +246,21 @@
 
 - `INVALID_CREDENTIALS`：用户名或密码错误
 - `USER_DISABLED`：账号已禁用，请联系管理员
+- `PASSWORD_CHANGE_REQUIRED`：立即跳到 `/force-password-change`
 - `SESSION_ERROR`：系统繁忙，请稍后重试
 
-### 7.2 invitation 页
+### 7.2 强制改密页
+
+- `PASSWORD_CHANGE_INVALID`：留在当前页并展示密码规则或“新旧密码不能相同”
+- `UNAUTHENTICATED`：回 `/login`
+
+### 7.3 invitation 页
 
 - invitation 无效：展示专门失效页
 - 用户名不匹配：保持在当前页并高亮用户名输入
 - 密码不合法：保持在当前页并展示密码规则
 
-### 7.3 工作台与后台
+### 7.4 工作台与后台
 
 - `UNAUTHENTICATED`：回 `/login`
 - `USER_DISABLED`：进入禁用拦截态
@@ -243,7 +275,7 @@
 - 不直接调用 `/internal/*`
 - 不自己拼装 `subjectId`
 - 不新增 `/post-login`
-- 不在首版前端实现改密、找回密码或第三方登录入口
+- 不在首版前端实现通用改密、找回密码或第三方登录入口
 
 ---
 
@@ -252,10 +284,11 @@
 前端需要记住的唯一认证结论是：
 
 1. 登录走 `/api/v1/auth/login`
-2. invitation 接入走 `/api/v1/public/invitations/{token}/accept`
-3. 成功后直接进入 `/app` 或 `/admin`
-4. 工作区跳转只信 `/api/v1/workspace-entry`
-5. 首版不做改密和找回密码
+2. 若命中种子管理员首登，必须先走 `/api/v1/auth/password/change`
+3. invitation 接入走 `/api/v1/public/invitations/{token}/accept`
+4. 成功后直接进入 `/app`、`/admin` 或 `/force-password-change`
+5. 工作区跳转只信 `/api/v1/workspace-entry`
+6. 首版不做通用改密和找回密码
 
 ---
 

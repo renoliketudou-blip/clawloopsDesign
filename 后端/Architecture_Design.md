@@ -5,7 +5,7 @@
 | 文档定位 | 系统架构与 MVP 落地设计 |
 | --- | --- |
 | 适用范围 | 单机部署、多用户访问、容器级隔离、统一模型网关、业务内轻量认证 |
-| 本版重点 | 冻结登录与邀请接入链路、统一 session 校验边界、删除外部 IAM 依赖、明确不做改密与找回密码、保持 runtime V1 contract 不漂移 |
+| 本版重点 | 冻结登录与邀请接入链路、统一 session 校验边界、删除外部 IAM 依赖、补充种子管理员首登强制改密、保持 runtime V1 contract 不漂移 |
 | 关联文档 | 《MVP 开发基线总契约》《MVP 统一总接口》《RuntimeManager 开发契约》《轻量认证实施文档》 |
 | 当前版本 | v0.12-lightweight-auth |
 
@@ -22,8 +22,9 @@
 - invitation 改为 **单层模型**
 - 用户在平台站内完成首次设密与 invitation 接受
 - 登录成功后直接进入 `/admin` 或 `/app`，不再经过 `post-login` 中转页
+- 种子管理员默认密码固定为 `admin`，首次登录后必须立刻改密
 - 所有 workspace 子域名继续受保护，但保护方式改为 **平台 session + 自有鉴权中间层**
-- 首版明确 **不做改密、不做找回密码**
+- 首版不做通用自助改密与找回密码，但保留受限的首登强制改密
 - runtime V1 仍采用 **固定镜像 + 固定命令 + 固定端口 + 固定 alias + `compat` 必填** 的冻结契约
 - RuntimeManager 是**同步执行器**；Orchestrator 才是对用户侧暴露任务的**异步编排器**
 
@@ -45,7 +46,7 @@ MVP 仍然不追求：
 
 - 第三方登录
 - 企业目录同步
-- 改密流程
+- 通用改密流程
 - 找回密码流程
 - 复杂多租户隔离 UI
 - 用户自助 provider key 管理
@@ -60,7 +61,7 @@ MVP 仍然不追求：
 | 邀请机制 | 平台单层 invitation，站内完成首次设密与消费 |
 | 工作区访问 | Traefik + 平台 session 鉴权中间层 |
 | 用户密码 | 平台认证模块保存密码哈希并验证 |
-| 密码扩展 | 首版不做改密与找回密码 |
+| 密码扩展 | 首版仅支持种子管理员首登强制改密，不做找回密码 |
 | runtime V1 | 固定镜像、固定端口、固定网络、固定 alias、`compat` 必填 |
 | 外部身份源 | 后续扩展，不在首版启用 |
 
@@ -121,7 +122,8 @@ MVP 仍然不追求：
 
 - 平台只存密码哈希，不存密码明文
 - 首版只做登录验证和首次设密
-- 首版不做改密、找回密码、邮箱验证
+- 首版允许种子管理员在首次登录后立即完成一次强制改密
+- 首版不做通用自助改密、找回密码、邮箱验证
 
 ### 3.5 工作区入口安全边界
 
@@ -180,6 +182,7 @@ MVP 仍然不追求：
 - `status`
 - `createdAt`
 - `lastLoginAt`
+- `mustChangePassword`
 
 字段语义冻结：
 
@@ -187,6 +190,7 @@ MVP 仍然不追求：
 - `username` 是首版主登录标识
 - `role` 只认 `admin / user`
 - `status` 只认 `active / disabled`
+- `mustChangePassword` 表示当前会话是否必须先完成改密
 
 ### 5.2 session 模型
 
@@ -212,8 +216,11 @@ MVP 仍然不追求：
 推荐做法：
 
 1. 首次部署时通过环境变量或初始化脚本写入一个 `admin` 用户
-2. 初始密码只用于平台管理员第一次登录
-3. 后续管理员继续通过平台登录页登录
+2. 种子管理员默认初始密码固定为 `admin`
+3. 初始化时同时写入 `mustChangePassword=true`
+4. 管理员第一次用 `admin` 登录成功后，立即跳转 `/force-password-change`
+5. 改密成功后才允许继续进入 `/admin`
+6. 后续管理员继续通过平台登录页登录
 
 冻结要求：
 
@@ -291,10 +298,21 @@ MVP 仍然不追求：
 2. 提交 `username + password`
 3. 平台校验用户状态与密码哈希
 4. 平台建立 session
-5. `admin` 进入 `/admin`
-6. 普通用户进入 `/app`
+5. 若 `mustChangePassword=true`，进入 `/force-password-change`
+6. 其他 `admin` 进入 `/admin`
+7. 普通用户进入 `/app`
 
-### 7.2 invitation 首次接入
+### 7.2 种子管理员首登改密
+
+1. 种子管理员使用默认密码 `admin` 登录
+2. 平台建立 session，但保留 `mustChangePassword=true`
+3. 浏览器立即跳转 `/force-password-change`
+4. 仅允许访问改密页和 logout
+5. 提交 `currentPassword + newPassword + newPasswordConfirm`
+6. 平台更新密码哈希并清除 `mustChangePassword`
+7. 浏览器进入 `/admin`
+
+### 7.3 invitation 首次接入
 
 1. 用户打开 `/invite/{token}`
 2. 平台展示 invitation 预览
@@ -302,7 +320,7 @@ MVP 仍然不追求：
 4. 平台完成 invitation 消费、membership 绑定与 session 建立
 5. 进入 `/app`
 
-### 7.3 logout
+### 7.4 logout
 
 1. 前端调用 `POST /api/v1/auth/logout`
 2. 平台撤销当前 session
@@ -315,6 +333,7 @@ MVP 仍然不追求：
 ### 8.1 控制面权限
 
 - `/admin/*` 只允许 `admin`
+- 当 `mustChangePassword=true` 时，`/force-password-change` 是唯一允许进入的已登录页面
 - `/app`、`/workspace-entry` 只允许已登录且 `allowed=true`
 - disabled 用户不能继续进入业务页面
 
@@ -407,7 +426,7 @@ networks:
 - 第三方登录
 - 企业 SSO
 - SCIM / 目录同步
-- 改密页
+- 通用改密页
 - 找回密码页
 - 邮箱验证码
 - 多因素认证
@@ -438,7 +457,8 @@ networks:
 - **ClawLoops 自己负责 membership 绑定与资源治理**
 - **Traefik + 平台自有鉴权中间层负责 workspace 入口保护**
 - **首版只开本地账号密码**
-- **首版不做改密与找回密码**
+- **种子管理员默认密码为 `admin`，且首次登录必须立刻改密**
+- **首版不做通用改密与找回密码**
 - **`admin` 登录后默认进入 `/admin`；普通用户登录后默认进入 `/app`；`workspace-entry` 只负责最终跳转与短时等待**
 - **Orchestrator 负责对外异步编排，RuntimeManager 负责对内同步执行**
 - **runtime V1 统一固定为 `clawloops_shared + 18789 + rt-<runtimeId> + compat 必填`**

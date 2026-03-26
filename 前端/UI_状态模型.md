@@ -40,7 +40,7 @@
 - 不把 `task.status`、`observedState`、`ready` 混成一个状态
 - 不直接调用 `/internal/*`
 - 不把 `/app` 当成纯中转页
-- 不新增首版改密、找回密码、第三方登录入口
+- 不新增通用改密、找回密码、第三方登录入口
 
 ### 2.3 前端统一状态切片
 
@@ -74,7 +74,9 @@
     "method": "local_password"
   },
   "isAdmin": true,
-  "isDisabled": false
+  "isDisabled": false,
+  "mustChangePassword": false,
+  "passwordChangeReason": null
 }
 ```
 
@@ -84,6 +86,7 @@
 - `status` 只认 `active | disabled`
 - `isAdmin` 用于菜单显隐
 - `isDisabled` 只用于展示，业务通行以 `/auth/access` 为准
+- `mustChangePassword=true` 时，前端必须优先收口到 `/force-password-change`
 
 ### 3.2 AccessGate
 
@@ -111,7 +114,7 @@
     }
   ],
   "features": {
-    "passwordChange": false,
+    "forcedPasswordChange": true,
     "passwordRecovery": false,
     "thirdPartyLogin": false
   }
@@ -121,7 +124,8 @@
 前端语义：
 
 - `methods` 首版只渲染一个入口
-- `passwordChange=false` 和 `passwordRecovery=false` 时，不显示相关入口
+- `forcedPasswordChange=true` 只表示存在受限强制改密流，不表示前端开放通用改密入口
+- `passwordRecovery=false` 时，不显示找回密码入口
 
 ### 3.4 InvitationPreview
 
@@ -200,6 +204,36 @@
 - `ready=true` 才允许跳转
 - `browserUrl` 不可在别处直接复用作最终跳转依据
 
+### 3.7 PasswordChangeResult
+
+```json
+{
+  "changed": true,
+  "redirectTo": "/admin",
+  "user": {
+    "userId": "u_admin",
+    "subjectId": "clawloops:u_admin",
+    "username": "admin",
+    "tenantId": "t_default",
+    "role": "admin",
+    "status": "active",
+    "auth": {
+      "provider": "clawloops",
+      "method": "local_password"
+    },
+    "isAdmin": true,
+    "isDisabled": false,
+    "mustChangePassword": false,
+    "passwordChangeReason": null
+  }
+}
+```
+
+前端语义：
+
+- 该结果只用于首登强制改密成功后的跳转
+- `redirectTo` 是唯一后续落点依据
+
 ---
 
 ## 4. 页面级状态机
@@ -221,8 +255,26 @@
 - 成功后进入 `successRedirecting`
 - `INVALID_CREDENTIALS` 进入 `invalidCredentials`
 - `USER_DISABLED` 进入 `disabled`
+- 若 `mustChangePassword=true` 或 `redirectTo=/force-password-change`，必须立刻跳转强制改密页
 
-## 4.2 `/invite/:token`
+## 4.2 `/force-password-change`
+
+状态：
+
+- `idle`
+- `submitting`
+- `successRedirecting`
+- `invalidCurrentPassword`
+- `passwordInvalid`
+- `systemError`
+
+切换规则：
+
+- 页面仅对已登录且 `mustChangePassword=true` 的用户可见
+- 提交成功后进入 `successRedirecting` 并跳转 `/admin`
+- `PASSWORD_CHANGE_INVALID` 留在当前页并展示表单级错误
+
+## 4.3 `/invite/:token`
 
 状态：
 
@@ -245,7 +297,7 @@
 - 提交后进入 `submitting`
 - `accepted=true` 后进入 `accepted` 并跳转 `/app`
 
-## 4.3 `/app`
+## 4.4 `/app`
 
 状态：
 
@@ -259,7 +311,7 @@
 - 首次接入成功后的确认信息在 `/app` 内承接
 - 不额外做 `/post-login`
 
-## 4.4 `/workspace-entry`
+## 4.5 `/workspace-entry`
 
 状态：
 
@@ -277,12 +329,16 @@
 - `/login`
 - `/invite/:token`
 
-### 5.2 登录用户路由
+### 5.2 强制改密路由
+
+- `/force-password-change`
+
+### 5.3 登录用户路由
 
 - `/app`
 - `/workspace-entry`
 
-### 5.3 管理员路由
+### 5.4 管理员路由
 
 - `/admin`
 - `/admin/*`
@@ -291,8 +347,9 @@
 
 1. 判断是否需要登录
 2. 读取 `/auth/me`
-3. 读取 `/auth/access`
-4. 若需 admin，再判断 `isAdmin`
+3. 若 `mustChangePassword=true`，除 `/force-password-change` 外全部重定向
+4. 对其他业务页读取 `/auth/access`
+5. 若需 admin，再判断 `isAdmin`
 
 ---
 
@@ -303,6 +360,8 @@
 | `UNAUTHENTICATED` | 已登录页 | 回 `/login` |
 | `INVALID_CREDENTIALS` | `/login` | 表单级报错 |
 | `USER_DISABLED` | 登录页/已登录页 | 显示禁用说明 |
+| `PASSWORD_CHANGE_REQUIRED` | 已登录页 | 立即跳 `/force-password-change` |
+| `PASSWORD_CHANGE_INVALID` | `/force-password-change` | 表单级报错 |
 | `ACCESS_DENIED` | `/admin/*` | 403 页面 |
 | `INVITATION_NOT_FOUND` | `/invite/:token` | 不存在页 |
 | `INVITATION_EXPIRED` | `/invite/:token` | 已过期页 |
@@ -315,7 +374,7 @@
 
 ## 7. 首版不做
 
-- 改密页面
+- 通用改密页面
 - 找回密码页面
 - 第三方登录按钮
 - 登录后收口页
@@ -328,10 +387,11 @@
 前端只需要记住：
 
 1. `session` 和 `access` 是登录后唯一真相
-2. invitation 接入在 `/invite/:token` 内完成闭环
-3. `/app` 承接首次接入成功确认
-4. `/workspace-entry` 只做最终跳转
-5. 首版不做改密与找回密码
+2. 若 `mustChangePassword=true`，必须先进入 `/force-password-change`
+3. invitation 接入在 `/invite/:token` 内完成闭环
+4. `/app` 承接首次接入成功确认
+5. `/workspace-entry` 只做最终跳转
+6. 首版不做通用改密与找回密码
 
 ---
 
