@@ -145,6 +145,7 @@
 | POST | `/api/v1/auth/password/change` | 修改当前登录用户密码（首版仅用于强制改密） | 用户 |
 | GET | `/api/v1/auth/me` | 获取当前登录用户 | 用户 |
 | GET | `/api/v1/auth/access` | 检查当前用户是否可访问业务（永远返回 200） | 用户 |
+| GET | `/internal/auth/workspace-access` | workspace 子域统一网关鉴权入口 | internal |
 | GET | `/api/v1/public/invitations/{token}` | 查看 invitation 预览信息 | 公开 |
 | POST | `/api/v1/public/invitations/{token}/accept` | 启动接入并完成首次设密（幂等） | 公开 |
 | GET | `/api/v1/users/me/quota` | 获取当前用户 quota | 用户 |
@@ -250,6 +251,7 @@
 规则：
 
 - 成功时由服务端设置 session cookie
+- cookie 名称固定为 `clawloops_session`
 - 当 `mustChangePassword=true` 时返回 `redirectTo=/force-password-change`
 - 非强制改密状态下，`admin` 返回 `redirectTo=/admin`
 - disabled 用户返回 `403 USER_DISABLED`
@@ -299,7 +301,7 @@
 - `newPassword` 不得与当前密码相同
 - `newPassword` 必须满足 `/auth/options.passwordPolicy`
 - 成功后必须更新密码哈希，并清除 `mustChangePassword`
-- 推荐同时轮换当前 session，避免继续使用旧认证上下文
+- 成功后必须轮换当前 session，并用同名 cookie 覆盖旧值，避免继续使用旧认证上下文
 
 ### 5.4 `POST /api/v1/auth/logout`
 
@@ -314,7 +316,7 @@
 规则：
 
 - 撤销当前 session
-- 清理浏览器侧 session cookie
+- 清理浏览器侧 session cookie，且必须使用与签发时相同的 `Domain / Path / SameSite / Secure`
 
 ### 5.5 `GET /api/v1/auth/me`
 
@@ -363,6 +365,50 @@
 - 当 `reason=PASSWORD_CHANGE_REQUIRED` 时，前端必须立刻跳转 `/force-password-change`
 - 当 `reason=USER_DISABLED` 时，前端应进入账号禁用说明页或禁用拦截页
 
+### 5.7 session cookie 冻结规则
+
+- cookie 名称统一为 `clawloops_session`
+- `HttpOnly=true`
+- 生产环境 `Secure=true`
+- `SameSite=Lax`
+- `Path=/`
+- 生产环境 `Domain` 必须覆盖主域与 workspace 子域，例如 `.clawloops.example.com`
+- `POST /api/v1/auth/login`、`POST /api/v1/auth/password/change`、`POST /api/v1/public/invitations/{token}/accept` 成功后，若创建或轮换 session，必须写入同一套 cookie 属性
+- `POST /api/v1/auth/logout` 清 cookie 时必须复用完全一致的 `Domain / Path`
+
+### 5.8 `GET /internal/auth/workspace-access`
+
+用途：
+
+- 作为 Traefik `ForwardAuth` 或等价轻量代理的唯一放行判断入口
+- 保护所有 workspace 子域，防止用户绕过控制面直接访问 `browserUrl`
+
+请求约定：
+
+- 网关必须透传浏览器原始 cookie
+- 网关必须透传 `Host`
+- 网关必须透传 `X-Forwarded-Proto`、`X-Forwarded-Host`、`X-Forwarded-Uri`、`X-Forwarded-Method`
+- 平台依据 host 路由规则自行解析目标 `workspaceId`，不信任前端自填参数
+
+成功响应：
+
+- 返回 `200`
+- 允许附带只读透传头：`X-Clawloops-User-Id`、`X-Clawloops-Subject-Id`、`X-Clawloops-Workspace-Id`
+
+拒绝规则：
+
+- 无 session、session 无效或已撤销：`401 UNAUTHENTICATED`
+- 已登录但用户 `disabled`：`403 USER_DISABLED`
+- 已登录但 `mustChangePassword=true`：`403 PASSWORD_CHANGE_REQUIRED`
+- 已登录但不具备目标 workspace membership：`403 ACCESS_DENIED`
+- 已登录但目标 runtime 当前不可进入：`403 ACCESS_DENIED`
+- 网关对所有非 `2xx` 响应一律不得继续转发到 runtime
+
+说明：
+
+- 该接口只返回“允许 / 拒绝”结论，不承担浏览器跳转编排
+- 下游 runtime 不得把透传头重新作为新的信任边界
+
 ---
 
 ## 6. invitation 相关接口
@@ -409,6 +455,36 @@
 ```json
 {
   "accepted": true,
+  "replayed": false,
+  "redirectTo": "/app",
+  "user": {
+    "userId": "u_001",
+    "subjectId": "clawloops:u_001",
+    "username": "emp001",
+    "tenantId": "t_default",
+    "role": "user",
+    "status": "active",
+    "auth": {
+      "provider": "clawloops",
+      "method": "local_password"
+    },
+    "isAdmin": false,
+    "isDisabled": false
+  },
+  "workspaceBinding": {
+    "workspaceId": "ws_001",
+    "workspaceName": "Design Team",
+    "role": "workspace_member"
+  }
+}
+```
+
+幂等重放成功响应示例：
+
+```json
+{
+  "accepted": true,
+  "replayed": true,
   "redirectTo": "/app",
   "user": {
     "userId": "u_001",
@@ -435,9 +511,13 @@
 冻结规则：
 
 - 成功时一次性完成用户激活、密码哈希写入、membership 绑定、invitation 消费与 session 建立
-- 若 invitation 已被同一用户成功消费，再次提交返回稳定结果
+- 首次成功消费返回 `200`
+- 若 invitation 已被同一 `loginUsername` 对应用户成功消费，再次提交返回 `200`，且响应体语义必须保持稳定；可通过 `replayed=true` 表示命中幂等重放
+- 幂等重放不得再次创建用户、再次写入 membership、再次生成第二个业务副作用
+- 若 invitation 已被其他用户消费，返回 `409 INVITATION_ALREADY_CONSUMED`
 - 不允许前端自己补消费逻辑
 - `password` 必须满足 `/auth/options.passwordPolicy`
+- 成功时由服务端设置或轮换 `clawloops_session` cookie，并使用冻结的 cookie 属性
 
 ---
 

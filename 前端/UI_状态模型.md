@@ -35,10 +35,12 @@
 ### 2.2 前端禁止做的事
 
 - 不解析 session cookie 作为业务真相
+- 不读取、写入或删除 `clawloops_session`
 - 不从前端拼装 `userId`、`subjectId` 作为鉴权输入
 - 不把 `browserUrl` 直接当可访问条件，必须先看 `workspace-entry.ready`
 - 不把 `task.status`、`observedState`、`ready` 混成一个状态
 - 不直接调用 `/internal/*`
+- 不向 `browserUrl` 拼接 token、ticket、`userId` 或其他鉴权参数
 - 不把 `/app` 当成纯中转页
 - 不新增通用改密、找回密码、第三方登录入口
 
@@ -169,6 +171,7 @@
 ```json
 {
   "accepted": true,
+  "replayed": false,
   "redirectTo": "/app",
   "user": {
     "userId": "u_001",
@@ -197,6 +200,7 @@
 - 成功后不再进入中转页
 - `redirectTo` 是唯一跳转依据
 - `workspaceBinding` 用于 `/app` 首屏确认“已加入哪个 workspace”
+- `replayed=true` 表示命中幂等重放成功，前端仍按普通成功态处理，不额外提示重复提交错误
 
 ### 3.6 WorkspaceEntry
 
@@ -214,6 +218,7 @@
 
 - `ready=true` 才允许跳转
 - `browserUrl` 不可在别处直接复用作最终跳转依据
+- 跳转时不附加额外鉴权参数，workspace 子域访问权限依赖浏览器当前已持有的平台 session
 
 ### 3.7 PasswordChangeResult
 
@@ -328,7 +333,8 @@
 - 页面先进入 `loadingPreview`
 - 预览成功后进入 `previewReady`
 - 提交后进入 `submitting`
-- `accepted=true` 后进入 `accepted` 并跳转 `/app`
+- `accepted=true` 后进入 `accepted` 并按 `redirectTo` 跳转
+- `replayed=true` 不单独建错误态，仍归入 `accepted`
 
 ## 4.6 `/app`
 

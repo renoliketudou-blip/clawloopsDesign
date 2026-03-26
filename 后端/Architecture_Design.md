@@ -167,6 +167,18 @@ MVP 仍然不追求：
 - 不依赖第三方身份头
 - 只把“该用户是否允许访问该 workspace”作为判断依据
 
+冻结落地契约建议如下：
+
+- 网关统一调用 `GET /internal/auth/workspace-access`
+- 网关必须原样透传浏览器带来的平台 session cookie
+- 网关必须透传 `Host`、`X-Forwarded-Proto`、`X-Forwarded-Host`、`X-Forwarded-Uri`、`X-Forwarded-Method`
+- 平台依据 workspace 子域名或已冻结的 host 路由规则自行解析目标 `workspaceId`，不信任前端额外传入的 workspace 参数
+- 平台鉴权接口只返回“放行 / 拒绝”结论，不承担页面跳转编排
+- 返回 `200` 表示允许继续转发到 runtime
+- 返回 `401` 表示当前 session 不存在、失效或已撤销
+- 返回 `403` 表示当前用户虽已登录，但命中 `USER_DISABLED`、`PASSWORD_CHANGE_REQUIRED`、无 workspace membership 或 runtime 当前不可进入
+- 返回 `200` 时可附带 `X-Clawloops-User-Id`、`X-Clawloops-Subject-Id`、`X-Clawloops-Workspace-Id` 供下游只读审计；下游不得把这些头重新当作新的信任边界
+
 ---
 
 ## 5. 认证与会话模型
@@ -209,6 +221,17 @@ MVP 仍然不追求：
 - session 过期由服务端校验
 - logout 通过服务端撤销 session
 - 不要求前端解析 token
+
+cookie 冻结规则：
+
+- cookie 名称统一为 `clawloops_session`
+- `HttpOnly=true`
+- 生产环境 `Secure=true`
+- `SameSite=Lax`
+- `Path=/`
+- 生产环境 cookie `Domain` 必须覆盖主域与 workspace 子域，例如 `.clawloops.example.com`
+- 登录成功、invitation 接受成功、强制改密成功后若发生 session 轮换，必须用同名 cookie 覆盖旧值，并保持完全一致的 `Domain / Path / SameSite / Secure` 属性
+- logout 清 cookie 时必须使用与签发时完全一致的 `Domain / Path`，否则视为未真正清理
 
 ### 5.3 管理员初始化
 
@@ -271,6 +294,19 @@ MVP 仍然不追求：
 9. 平台把 invitation 标记为 `consumed`
 10. 平台建立 session
 11. 浏览器直接进入 `/app` 或 `/admin`
+
+### 6.3.1 invitation 幂等冻结
+
+`POST /api/v1/public/invitations/{token}/accept` 必须按最终业务结果幂等：
+
+- 首次成功消费返回 `200`
+- 若同一 `token` 已被同一 `loginUsername` 对应用户成功消费，再次提交仍返回 `200`
+- 重放成功场景下，响应体必须保持同一最终结果语义，可额外返回 `replayed=true`
+- 重放不得再次创建用户、再次写入 membership、再次创建第二个有效 session 副作用
+- 若 invitation 已被其他用户消费，返回 `409 INVITATION_ALREADY_CONSUMED`
+- 若 invitation 已撤销，返回 `409 INVITATION_REVOKED`
+- 若 invitation 已过期，返回 `410 INVITATION_EXPIRED`
+- 若本次提交 `username` 与 invitation 冻结的 `loginUsername` 不一致，返回 `422 INVITATION_USERNAME_MISMATCH`
 
 ### 6.4 为什么不再需要 `post-login`
 

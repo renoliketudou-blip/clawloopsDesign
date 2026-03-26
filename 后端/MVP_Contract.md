@@ -176,6 +176,17 @@
 - `/auth/me` 是当前登录用户唯一真相
 - `/auth/access` 是当前业务可访问性唯一真相
 
+cookie 冻结口径：
+
+- cookie 名称统一为 `clawloops_session`
+- `HttpOnly=true`
+- 生产环境 `Secure=true`
+- `SameSite=Lax`
+- `Path=/`
+- 生产环境 `Domain` 必须覆盖主域与 workspace 子域，例如 `.clawloops.example.com`
+- 登录成功、invitation 接受成功、强制改密成功后若发生 session 创建或轮换，必须写入同一套 cookie 属性
+- logout 清 cookie 时必须复用完全一致的 `Domain / Path`
+
 ---
 
 ## 5. invitation 生命周期冻结
@@ -206,6 +217,12 @@
 - 同一 `invitationId + userId` 只能成功消费一次
 - 刷新页面、浏览器重试、网络抖动不得产生重复 membership 或重复 side effect
 - `consume invitation` 与 `workspace membership binding` 必须原子，或有清晰补偿逻辑
+- 首次成功消费返回 `200`
+- 若同一 `token` 已被同一 `loginUsername` 对应用户成功消费，再次提交仍返回 `200`，且最终响应语义必须稳定；可额外返回 `replayed=true`
+- 若 invitation 已被其他用户消费，返回 `409 INVITATION_ALREADY_CONSUMED`
+- 若 invitation 已撤销，返回 `409 INVITATION_REVOKED`
+- 若 invitation 已过期，返回 `410 INVITATION_EXPIRED`
+- 若提交的 `username` 与 invitation 冻结的 `loginUsername` 不一致，返回 `422 INVITATION_USERNAME_MISMATCH`
 
 ---
 
@@ -232,6 +249,17 @@
 - 所有 workspace 子域名必须先通过平台 session 鉴权
 - 知道 URL 不等于可访问
 - `workspace-entry` 是唯一工作区跳转入口；仅服务非管理员用户
+
+网关鉴权冻结口径：
+
+- 网关统一调用 `GET /internal/auth/workspace-access`
+- 网关必须透传浏览器原始 session cookie 与 `Host`
+- 网关必须透传 `X-Forwarded-Proto`、`X-Forwarded-Host`、`X-Forwarded-Uri`、`X-Forwarded-Method`
+- 平台依据 host 路由规则自行解析目标 `workspaceId`
+- 返回 `200` 才允许继续转发到 runtime
+- 返回 `401` 表示 session 缺失、失效或已撤销
+- 返回 `403` 表示用户已登录但命中 `USER_DISABLED`、`PASSWORD_CHANGE_REQUIRED`、无 workspace membership 或 runtime 当前不可进入
+- 网关不得把下游 runtime 的可达性当作权限放行依据，权限真相只来自平台鉴权接口
 
 ### 7.3 前后端统一口径
 
@@ -275,7 +303,6 @@
 4. 前端读取 `/api/v1/auth/me`
 5. 若 `mustChangePassword=true`，优先进入 `/force-password-change`
 6. 其他场景按角色进入 `/admin` 或 `/app`
-6. 若 mustChangePassword=true，优先进入 /force-password-change
 
 
 ### 9.2 invitation 接入主流程
@@ -284,7 +311,7 @@
 2. 读取 `/api/v1/public/invitations/{token}`
 3. 用户提交 `/api/v1/public/invitations/{token}/accept`
 4. 后端完成用户激活、membership 绑定、invitation 消费、session 建立
-5. 前端进入 `/app`
+5. 前端依据稳定成功响应进入 `/app`
 6. 若 token 无效，则留在 `/invite/{token}` 渲染对应失效页面态
 
 ### 9.3 工作区进入主流程

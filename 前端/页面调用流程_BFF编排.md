@@ -33,6 +33,12 @@
 - Runtime Manager internal API
 - 任何第三方 IAM API
 
+session 约束：
+
+- 前端不读取 `clawloops_session`
+- 前端不自己设置、续期或删除 session cookie
+- 前端不向 `browserUrl` 拼接 token、ticket、`userId` 或其他鉴权参数
+
 前端唯一允许直接离开当前控制面域的动作：
 
 - 从 `workspace-entry` 获得 `browserUrl` 后整页跳转到 workspace 子域名
@@ -47,6 +53,7 @@
 6. `browserUrl` 不等于可访问，`ready=true` 才允许跳转。
 7. 邀请、登录、runtime 等失败页必须给出明确下一步，不允许只停留在说明页。
 8. `admin` 首页只信 `GET /api/v1/admin/home`。
+9. session cookie 由浏览器和服务端维护，前端不读取、不拼接、不覆盖。
 
 ---
 
@@ -177,7 +184,7 @@
 2. 收集 `password`
 3. 收集 `passwordConfirm`
 4. `POST /api/v1/public/invitations/{token}/accept`
-5. 成功后按 `redirectTo` 进入 `/app`
+5. 若返回 `accepted=true`，无论 `replayed=false` 还是 `replayed=true`，都按 `redirectTo` 进入 `/app`
 
 失败分支要求：
 
@@ -224,6 +231,7 @@
 - 只在 `ready=true` 时允许整页跳转 `browserUrl`
 - `observedState` 只用于展示，不作为最终跳转依据
 - 用户若无合法 workspace，应回到 `/app` 的承接态
+- 跳转时不附加任何额外鉴权参数，workspace 子域访问权限完全依赖浏览器已持有的平台 session
 
 ---
 
@@ -286,6 +294,7 @@
 - invitation 无效：展示专门失效页
 - 用户名不匹配：保持在当前页并高亮用户名输入
 - 密码不合法：保持在当前页并展示密码规则
+- `accepted=true` 且 `replayed=true`：按普通成功分支处理，不额外弹“重复提交”错误
 
 ### 7.4 工作台与后台
 
@@ -298,9 +307,11 @@
 ## 8. 不可越界事项
 
 - 不解析 cookie 或 token 作为业务真相
+- 不读取、写入或删除 `clawloops_session`
 - 不把 `browserUrl` 直接当可访问条件，必须先看 `workspace-entry.ready`
 - 不直接调用 `/internal/*`
 - 不自己拼装 `subjectId`
+- 不向 `browserUrl` 拼接任何鉴权参数
 - 不新增 `/post-login`
 - 不在首版前端实现通用改密、找回密码或第三方登录入口
 
