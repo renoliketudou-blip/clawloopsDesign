@@ -47,6 +47,7 @@
 | 410 | `INVITATION_EXPIRED` | invitation 已过期（由 `expiresAt < now` 推导，不单独落库存状态） |
 | 422 | `INVITATION_USERNAME_MISMATCH` | 当前接入用户名与 invitation 指定用户名不匹配 |
 | 422 | `INVITATION_PASSWORD_INVALID` | 首次设密不符合平台密码规则 |
+| 422 | `CURRENT_PASSWORD_INCORRECT` | 强制改密时当前密码校验失败 |
 | 422 | `PASSWORD_CHANGE_INVALID` | 新密码不符合平台规则，或与当前密码不允许相同 |
 | 422 | `INVITATION_WORKSPACE_INVALID` | invitation 指向的 workspace 无效 |
 | 422 | `QUOTA_EXCEEDED` | 超出 quota |
@@ -106,6 +107,15 @@
 - `POST /api/v1/auth/password/change`
 - 仅允许已登录用户修改自己的当前密码
 - 首版前端只把它用于种子管理员首次登录后的强制改密
+
+首版统一密码规则：
+
+- `minLength = 8`
+- `maxLength = 64`
+- 必须至少包含 1 个字母与 1 个数字
+- 不允许与 `username` 相同
+- 不允许继续使用默认管理员密码 `admin`
+- invitation 首次设密与首登强制改密共用同一套规则
 
 ### 3.6 幂等要求
 
@@ -186,6 +196,14 @@
       "label": "用户名优先登录"
     }
   ],
+  "passwordPolicy": {
+    "minLength": 8,
+    "maxLength": 64,
+    "requireLetter": true,
+    "requireNumber": true,
+    "disallowUsernameAsPassword": true,
+    "disallowDefaultAdminPassword": true
+  },
   "features": {
     "forcedPasswordChange": true,
     "passwordRecovery": false,
@@ -277,8 +295,9 @@
 
 - 仅允许当前已登录用户修改自己的密码
 - 首版前端只在 `mustChangePassword=true` 时暴露该能力
-- `currentPassword` 必须校验通过
+- `currentPassword` 校验失败时返回 `422 CURRENT_PASSWORD_INCORRECT`
 - `newPassword` 不得与当前密码相同
+- `newPassword` 必须满足 `/auth/options.passwordPolicy`
 - 成功后必须更新密码哈希，并清除 `mustChangePassword`
 - 推荐同时轮换当前 session，避免继续使用旧认证上下文
 
@@ -340,7 +359,9 @@
 
 - 该接口永远返回 `200`
 - `allowed=false` 时由前端做禁用态或无权限态渲染
+- `reason` 首版只认 `USER_DISABLED | PASSWORD_CHANGE_REQUIRED | null`
 - 当 `reason=PASSWORD_CHANGE_REQUIRED` 时，前端必须立刻跳转 `/force-password-change`
+- 当 `reason=USER_DISABLED` 时，前端应进入账号禁用说明页或禁用拦截页
 
 ---
 
@@ -416,6 +437,7 @@
 - 成功时一次性完成用户激活、密码哈希写入、membership 绑定、invitation 消费与 session 建立
 - 若 invitation 已被同一用户成功消费，再次提交返回稳定结果
 - 不允许前端自己补消费逻辑
+- `password` 必须满足 `/auth/options.passwordPolicy`
 
 ---
 

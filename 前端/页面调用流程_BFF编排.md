@@ -55,6 +55,8 @@
 | 路由 | 页面名称 | 权限 | 初始化接口 | 主动作 |
 | --- | --- | --- | --- | --- |
 | `/login` | 登录入口页 | 公开 | `/api/v1/auth/options` | `/auth/login` |
+| `/disabled` | 账号禁用说明页 | 公开 | 无 | logout / 回登录 |
+| `/403` | 无权限页 | 公开 | 无 | 回首页 / 返回上一页 |
 | `/force-password-change` | 首登强制改密页 | 已登录且 `mustChangePassword=true` | `/api/v1/auth/me` | `/auth/password/change` |
 | `/invite/:token` | invitation 接入页 | 公开 | `/api/v1/public/invitations/{token}` | `/accept` |
 | `/app` | 用户工作台 | 已登录且 allowed | `/auth/me`、`/auth/access`、`/users/me/runtime/status`、`/models` | start/stop/delete/open |
@@ -88,6 +90,7 @@
 
 - 登录方式只展示 `local_password`
 - 登录入口文案以 `/auth/options.methods[0].label` 为准（当前固定为 `用户名优先登录`）
+- 密码提示文案以 `/auth/options.passwordPolicy` 为准，不允许前端手写另一套规则
 - 对无真实邮箱用户，登录页辅助文案应明确“请优先使用管理员提供的用户名登录”
 - 不展示 Google、GitHub、企业 SSO 等入口
 - 不展示通用改密和找回密码入口
@@ -106,6 +109,22 @@
 - 只负责展示表单、校验必填和错误态
 - 不负责持久化密码
 
+## 4.1A 账号禁用说明页 `/disabled`
+
+页面规则：
+
+- 该页用于承接 `/auth/access.reason=USER_DISABLED`
+- 不再发起业务页初始化请求
+- 可提供 logout 与返回 `/login` 入口
+
+## 4.1B 无权限页 `/403`
+
+页面规则：
+
+- 该页用于承接 `ACCESS_DENIED`
+- 非 admin 进入 `/admin/*` 时统一跳转到这里
+- 不复用为账号禁用页
+
 ## 4.2 首登强制改密页 `/force-password-change`
 
 ### 初始化流程
@@ -117,6 +136,7 @@
 
 - 该页不是后台导航页，不进入 `/admin` 壳层
 - 必须明确提示“当前为默认初始密码，需先修改后才能继续”
+- 密码规则提示必须来自 `/auth/options.passwordPolicy` 或其缓存结果
 - 必须提供当前密码、新密码、确认新密码三个输入项
 - 除 logout 外，不提供跳过入口
 
@@ -127,6 +147,11 @@
 3. 收集 `newPasswordConfirm`
 4. `POST /api/v1/auth/password/change`
 5. 成功后按 `redirectTo` 进入 `/admin`
+
+失败分支要求：
+
+- `CURRENT_PASSWORD_INCORRECT`：高亮当前密码输入并提示重新输入
+- `PASSWORD_CHANGE_INVALID`：展示密码规则或“新旧密码不能相同”
 
 ## 4.3 invitation 接入页 `/invite/:token`
 
@@ -141,6 +166,7 @@
 - 必须展示 `workspaceName`
 - 必须展示 `role`
 - 必须展示 `expiresAt`
+- 密码规则提示必须来自 `/auth/options.passwordPolicy` 或其缓存结果
 - 若存在 `loginUsername`，必须将其作为主说明文案
 - 若存在 `targetEmail` 且为代理邮箱，不应把它作为主提示文案
 - 页内必须提供“设置初始密码并继续”主 CTA
@@ -251,6 +277,7 @@
 
 ### 7.2 强制改密页
 
+- `CURRENT_PASSWORD_INCORRECT`：当前密码错误，请重新输入
 - `PASSWORD_CHANGE_INVALID`：留在当前页并展示密码规则或“新旧密码不能相同”
 - `UNAUTHENTICATED`：回 `/login`
 
@@ -263,8 +290,8 @@
 ### 7.4 工作台与后台
 
 - `UNAUTHENTICATED`：回 `/login`
-- `USER_DISABLED`：进入禁用拦截态
-- `ACCESS_DENIED`：进入 403 页
+- `USER_DISABLED`：进入 `/disabled`
+- `ACCESS_DENIED`：进入 `/403`
 
 ---
 

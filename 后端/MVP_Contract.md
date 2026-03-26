@@ -249,6 +249,13 @@
 - 在登录时校验密码
 - 在已登录态下执行受限的首登强制改密
 
+首版统一密码规则：
+
+- 长度 `8-64`
+- 至少包含 1 个字母与 1 个数字
+- 不允许与 `username` 相同
+- 不允许继续使用默认管理员密码 `admin`
+
 平台统一禁止：
 
 - 保存密码明文
@@ -266,7 +273,10 @@
 2. 用户提交 `/api/v1/auth/login`
 3. 后端建立 session
 4. 前端读取 `/api/v1/auth/me`
-5. 按角色进入 `/admin` 或 `/app`
+5. 若 `mustChangePassword=true`，优先进入 `/force-password-change`
+6. 其他场景按角色进入 `/admin` 或 `/app`
+6. 若 mustChangePassword=true，优先进入 /force-password-change
+
 
 ### 9.2 invitation 接入主流程
 
@@ -275,6 +285,7 @@
 3. 用户提交 `/api/v1/public/invitations/{token}/accept`
 4. 后端完成用户激活、membership 绑定、invitation 消费、session 建立
 5. 前端进入 `/app`
+6. 若 token 无效，则留在 `/invite/{token}` 渲染对应失效页面态
 
 ### 9.3 工作区进入主流程
 

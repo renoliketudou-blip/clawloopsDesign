@@ -100,6 +100,8 @@
 前端语义：
 
 - `allowed=false` 且 `reason=USER_DISABLED` 时，进入禁用拦截态
+- `allowed=false` 且 `reason=PASSWORD_CHANGE_REQUIRED` 时，进入强制改密收口态
+- `reason` 首版只认 `USER_DISABLED | PASSWORD_CHANGE_REQUIRED | null`
 - 即使返回 `200`，也不能继续进入业务页面
 
 ### 3.3 AuthOptions
@@ -113,6 +115,14 @@
       "label": "用户名优先登录"
     }
   ],
+  "passwordPolicy": {
+    "minLength": 8,
+    "maxLength": 64,
+    "requireLetter": true,
+    "requireNumber": true,
+    "disallowUsernameAsPassword": true,
+    "disallowDefaultAdminPassword": true
+  },
   "features": {
     "forcedPasswordChange": true,
     "passwordRecovery": false,
@@ -124,6 +134,7 @@
 前端语义：
 
 - `methods` 首版只渲染一个入口
+- `passwordPolicy` 是登录页、邀请设密页、强制改密页展示密码规则提示的唯一真相
 - `forcedPasswordChange=true` 只表示存在受限强制改密流，不表示前端开放通用改密入口
 - `passwordRecovery=false` 时，不显示找回密码入口
 
@@ -272,9 +283,31 @@
 
 - 页面仅对已登录且 `mustChangePassword=true` 的用户可见
 - 提交成功后进入 `successRedirecting` 并跳转 `/admin`
+- `CURRENT_PASSWORD_INCORRECT` 进入 `invalidCurrentPassword`
 - `PASSWORD_CHANGE_INVALID` 留在当前页并展示表单级错误
 
-## 4.3 `/invite/:token`
+## 4.3 `/disabled`
+
+状态：
+
+- `shown`
+
+切换规则：
+
+- 当 `/auth/access.reason=USER_DISABLED` 时进入该页
+- 页面不再继续请求业务数据
+
+## 4.4 `/403`
+
+状态：
+
+- `shown`
+
+切换规则：
+
+- 当访问后台或其他受限页命中 `ACCESS_DENIED` 时进入该页
+
+## 4.5 `/invite/:token`
 
 状态：
 
@@ -297,7 +330,7 @@
 - 提交后进入 `submitting`
 - `accepted=true` 后进入 `accepted` 并跳转 `/app`
 
-## 4.4 `/app`
+## 4.6 `/app`
 
 状态：
 
@@ -311,7 +344,7 @@
 - 首次接入成功后的确认信息在 `/app` 内承接
 - 不额外做 `/post-login`
 
-## 4.5 `/workspace-entry`
+## 4.7 `/workspace-entry`
 
 状态：
 
@@ -327,6 +360,8 @@
 ### 5.1 公开路由
 
 - `/login`
+- `/disabled`
+- `/403`
 - `/invite/:token`
 
 ### 5.2 强制改密路由
@@ -359,10 +394,11 @@
 | --- | --- | --- |
 | `UNAUTHENTICATED` | 已登录页 | 回 `/login` |
 | `INVALID_CREDENTIALS` | `/login` | 表单级报错 |
-| `USER_DISABLED` | 登录页/已登录页 | 显示禁用说明 |
+| `USER_DISABLED` | 登录页/已登录页 | 跳 `/disabled` 或显示禁用说明 |
 | `PASSWORD_CHANGE_REQUIRED` | 已登录页 | 立即跳 `/force-password-change` |
+| `CURRENT_PASSWORD_INCORRECT` | `/force-password-change` | 高亮当前密码输入并报错 |
 | `PASSWORD_CHANGE_INVALID` | `/force-password-change` | 表单级报错 |
-| `ACCESS_DENIED` | `/admin/*` | 403 页面 |
+| `ACCESS_DENIED` | `/admin/*` | 跳 `/403` |
 | `INVITATION_NOT_FOUND` | `/invite/:token` | 不存在页 |
 | `INVITATION_EXPIRED` | `/invite/:token` | 已过期页 |
 | `INVITATION_REVOKED` | `/invite/:token` | 已撤销页 |
