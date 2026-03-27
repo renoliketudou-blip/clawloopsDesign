@@ -1,13 +1,13 @@
-# ClawLoops 平台 MVP 开发基线总契约（轻量认证版，运行时冻结修订）
+# ClawLoops 平台 MVP 开发基线总契约（轻量认证版，运行时 V2.2 修订）
 
-统一 1 到 6 模块在“业务内轻量认证 + runtime V1 冻结”条件下的职责边界、字段约定、状态枚举、错误码和联调流程。
+统一 1 到 6 模块在“业务内轻量认证 + runtime V2.2”条件下的职责边界、字段约定、状态枚举、错误码和联调流程。
 
 | 文档定位 | 模块协作总契约 |
 | --- | --- |
 | 适用阶段 | MVP 首版上线 |
-| 本版重点 | 增加站内登录与 invitation 首设密码流程、统一 session 鉴权边界、删除外部 IAM 依赖，并补充种子管理员首登强制改密 |
+| 本版重点 | 增加站内登录与 invitation 首设密码流程、统一 session 鉴权边界、删除外部 IAM 依赖、补充种子管理员首登强制改密，并把 runtime 收敛为后端渲染配置 + RM 执行启动 |
 | 本版原则 | 先跑通首版、边界清晰、字段冻结、实现尽量简单、便于直接落地 |
-| 当前版本 | v0.12-lightweight-auth |
+| 当前版本 | v0.14-runtime-v2.2 |
 
 ---
 
@@ -24,7 +24,7 @@
 | 工作区鉴权 | Traefik + 平台 session 鉴权中间层 |
 | 密码归属 | 平台认证模块保存密码哈希并执行验证 |
 | 密码扩展 | 首版仅支持种子管理员首登强制改密，不做找回密码 |
-| runtime V1 | 固定镜像、固定端口、固定网络、固定 alias、`compat` 必填 |
+| runtime V2.2 | 固定镜像、固定内部端口、固定网络、固定 alias、`compat` 必填、后端渲染 `openclaw.json` |
 | 用户体验基线 | 普通用户登录后默认进入 `/app`，由工作台承接首次使用与回访使用；无真实邮箱用户也必须可按用户名顺畅接入 |
 | workspace 关系基线 | 普通用户首版只会绑定 0 或 1 个 workspace，不存在前端 workspace 选择分支 |
 | 首版非目标 | 第三方登录、企业目录同步、复杂审批流、复杂共享空间权限、复杂费用管理 |
@@ -54,7 +54,7 @@
 | `desiredState` | `running / stopped / deleted` |
 | `observedState` | `creating / running / stopped / error / deleted` |
 | `browserUrl` | 浏览器可访问地址 |
-| `internalEndpoint` | 平台内部访问地址，V1 固定为 `http://rt-<runtimeId>:18789` |
+| `internalEndpoint` | 平台内部访问地址，V2.2 固定为 `http://rt-<runtimeId>:18789` |
 | `retentionPolicy` | `preserve_workspace / wipe_workspace` |
 | `ready` | 最终可访问状态，不等同于 `observedState` |
 | `volumeId` | 平台逻辑卷 ID，不等同于宿主机路径 |
@@ -324,18 +324,23 @@ cookie 冻结口径：
 
 ---
 
-## 10. 与 runtime V1 的冻结边界
+## 10. 与 runtime V2.2 的冻结边界
 
-本次认证改造不影响 runtime V1 关键规则：
+本次认证改造不改变 runtime 的执行边界，但把启动方式收敛为后端渲染配置、RM 执行启动。关键规则如下：
 
 - `runtimeId` 在平台范围内全局唯一
 - 用户侧 runtime 启停删是 **Orchestrator 异步任务**
 - RM internal 接口是 **同步执行器**
-- V1 runtime 镜像固定
+- runtime 镜像固定
 - `compat.openclawConfigDir / compat.openclawWorkspaceDir` 是 `ensure-running` 必填
+- `renderedConfig.openclawJson` 是 `ensure-running` 必填
+- `renderedConfig.configVersion` 是 `ensure-running` 必填
 - 统一共享网络为 `clawloops_shared`
+- LiteLLM 由平台后端共享 stack 统一启动，并以服务名 `litellm` 对多个 runtime 提供服务
 - `internalEndpoint` 固定为 `http://rt-<runtimeId>:18789`
 - `18789` 是唯一必检端口；`18790` 仅兼容保留
+- 浏览器正式入口统一走平台 session 鉴权，不以 runtime 直连端口作为主路径
+- gateway token 由 Orchestrator 持久化，默认长期有效，删除用户时失效
 
 ---
 
@@ -362,13 +367,15 @@ cookie 冻结口径：
 - **`admin` 登录后默认进入 `/admin`；普通用户登录后默认进入 `/app`**
 - **种子管理员默认密码为 `admin`，首次登录必须先完成强制改密**
 - **`workspace-entry` 只负责最终跳转，不承担登录收口**
-- **runtime V1 contract 继续冻结，不随认证改造漂移**
+- **LiteLLM 由平台后端共享托管，runtime 不再各自启动 LiteLLM**
+- **Orchestrator 负责渲染完整 `openclaw.json`，RuntimeManager 只写盘和挂载**
+- **runtime V2.2 contract 继续冻结，不随认证改造漂移**
 - **首版不做通用改密与找回密码**
 
 这套边界一旦冻结，前后端与平台服务就可以并行开发，而不需要在开发中途反复重谈认证模型。
 
 ---
 
-v0.12-轻量认证修订
+v0.14-runtime
 reno  
-2026-03-25
+2026-03-27

@@ -1209,12 +1209,12 @@
 5. **runtime 删除改为 `POST /api/v1/users/me/runtime/delete`，不再依赖 DELETE body**
 6. **所有 workspace 子域名必须统一经过平台 session 鉴权**
 7. **RuntimeManager internal 接口同步执行，`taskId` 只存在于 Orchestrator 对外层**
-8. **V1 runtime 统一使用 `clawloops_shared`、`18789`、固定 alias 与固定镜像**
+8. **runtime V2.2 统一使用 `clawloops_shared`、`18789`、固定 alias、固定镜像，并由 Orchestrator 渲染完整 `openclaw.json`**
 9. **种子管理员默认密码为 `admin`，首次登录必须先进入 `/force-password-change` 完成改密**
 10. **首版不做通用改密与找回密码**
 
 ---
 
-v0.12-轻量认证修订
+v0.14-runtime
 reno  
-2026-03-25
+2026-03-27

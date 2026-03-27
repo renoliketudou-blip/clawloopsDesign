@@ -493,13 +493,13 @@ Orchestrator 对外仍异步返回 taskId
 7. **把 invitation 链接定义成一次性首设密码入口**
 8. **把管理员首页与工作区跳转分开：`admin` 默认进 `/admin`，非管理员用户默认进 `/app`**
 9. **给 `/admin` 一个真正可用的首页，并用聚合接口返回摘要与待办**
-10. **把 runtime V1 明确定成 `clawloops_shared + 18789 + rt-<runtimeId> + compat 必填`**
+10. **把 runtime V2.2 明确定成 `clawloops_shared + 18789 + rt-<runtimeId> + compat 必填 + Orchestrator 渲染完整 openclaw.json`**
 11. **让 Orchestrator 负责异步任务，让 RuntimeManager 只做同步执行器**
 
 这套方案更贴近你当前 MVP 的真实需求，也更容易被前后端直接实现。
 
 ---
 
-v0.12-轻量认证修订
+v0.14-runtime
 reno  
-2026-03-25
+2026-03-27

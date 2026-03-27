@@ -1,13 +1,13 @@
-# ClawLoops 平台设计文档（业务内轻量认证版，运行时冻结修订）
+# ClawLoops 平台设计文档（业务内轻量认证版，运行时 V2.2 修订）
 
-基于既有 MVP 架构，按“**认证真相收回业务后端、邀请制首次设密、平台自管 session、工作区入口继续受保护、runtime V1 contract 保持冻结**”重构后的统一版本。
+基于既有 MVP 架构，按“**认证真相收回业务后端、邀请制首次设密、平台自管 session、工作区入口继续受保护、runtime 改为后端渲染配置 + RM 执行启动**”重构后的统一版本。
 
 | 文档定位 | 系统架构与 MVP 落地设计 |
 | --- | --- |
 | 适用范围 | 单机部署、多用户访问、容器级隔离、统一模型网关、业务内轻量认证 |
-| 本版重点 | 冻结登录与邀请接入链路、统一 session 校验边界、删除外部 IAM 依赖、补充种子管理员首登强制改密、保持 runtime V1 contract 不漂移 |
+| 本版重点 | 冻结登录与邀请接入链路、统一 session 校验边界、删除外部 IAM 依赖、补充种子管理员首登强制改密，并把 runtime 收敛为 V2.2：后端渲染配置、RM 只执行 |
 | 关联文档 | 《MVP 开发基线总契约》《MVP 统一总接口》《RuntimeManager 开发契约》《轻量认证实施文档》 |
-| 当前版本 | v0.12-lightweight-auth |
+| 当前版本 | v0.14-runtime-v2.2 |
 
 ---
 
@@ -25,7 +25,12 @@
 - 种子管理员默认密码固定为 `admin`，首次登录后必须立刻改密
 - 所有 workspace 子域名继续受保护，但保护方式改为 **平台 session + 自有鉴权中间层**
 - 首版不做通用自助改密与找回密码，但保留受限的首登强制改密
-- runtime V1 仍采用 **固定镜像 + 固定命令 + 固定端口 + 固定 alias + `compat` 必填** 的冻结契约
+- LiteLLM 统一并入平台后端共享部署，不再跟 per-user runtime 分散启动
+- Orchestrator 在启动前渲染完整 `openclaw.json`
+- RuntimeManager 只负责把渲染结果写盘、挂载并启动 runtime
+- 用户启动 runtime 前不再需要手工复制配置，也不再需要执行 `openclaw onboard`
+- workspace 浏览器入口统一走平台 `browserUrl` 与 session 鉴权，不以 runtime 宿主机端口作为正式入口
+- runtime 仍采用 **固定镜像 + 固定命令 + 固定内部端口 + 固定 alias + `compat` 必填 + 后端渲染配置** 的冻结契约
 - RuntimeManager 是**同步执行器**；Orchestrator 才是对用户侧暴露任务的**异步编排器**
 
 ---
@@ -62,7 +67,7 @@ MVP 仍然不追求：
 | 工作区访问 | Traefik + 平台 session 鉴权中间层 |
 | 用户密码 | 平台认证模块保存密码哈希并验证 |
 | 密码扩展 | 首版仅支持种子管理员首登强制改密，不做找回密码 |
-| runtime V1 | 固定镜像、固定端口、固定网络、固定 alias、`compat` 必填 |
+| runtime V2.2 | 固定镜像、固定内部端口、固定网络、固定 alias、`compat` 必填、后端渲染 `openclaw.json` |
 | 外部身份源 | 后续扩展，不在首版启用 |
 
 ---
@@ -154,6 +159,8 @@ MVP 仍然不追求：
 | `clawloops-api` | 登录、session、invitation、用户同步、membership 绑定、权限判断 |
 | `clawloops-web` | 登录页、邀请接入页、用户工作台、管理后台 |
 | `traefik` | 主域与 workspace 子域统一入口 |
+| `litellm` | 平台共享模型网关，由后端共享 stack 启动，为多个 runtime 提供一对多代理能力 |
+| `runtime-manager` | 同步执行容器动作、目录初始化、写入 `openclaw.json`、绑定共享网络并返回容器事实状态 |
 | `workspace auth middleware` | 基于平台 session 校验 workspace 子域访问权限 |
 
 这里的 `workspace auth middleware` 可以是：
@@ -456,6 +463,18 @@ networks:
 - workspace 鉴权中间层必须能访问平台认证校验接口
 - 主域名与 workspace 子域名必须共用可验证的平台 session
 
+### 11.3 runtime 与 LiteLLM 部署要求
+
+- `litellm` 必须放在平台后端共享 compose / stack 中统一启动
+- `litellm` 必须以服务名 `litellm` 加入 `clawloops_shared`
+- per-user runtime 不再自行启动 LiteLLM，也不再携带各自独立的 LiteLLM 配置副本
+- Orchestrator 必须在启动容器前渲染完整 `openclaw.json`
+- 渲染结果中必须包含固定 `gateway.bind=lan`、固定 `gateway.port=18789`、固定 `http://litellm:4000`
+- gateway token 由 Orchestrator 生成并持久化，默认长期有效；删除用户时同步失效
+- RuntimeManager 只负责把 `openclaw.json` 写入 `compat.openclawConfigDir` 并挂载进容器
+- runtime 默认不直接暴露宿主机端口；局域网访问应通过平台域名或平台局域网入口进入 Traefik，再经过 session 鉴权
+- 若未来需要运维调试直连端口，应定义为非默认能力，不得替代正式浏览器入口
+
 ---
 
 ## 12. 首版明确不做
@@ -472,17 +491,21 @@ networks:
 
 ---
 
-## 13. 与 runtime V1 的关系
+## 13. 与 runtime V2.2 的关系
 
-本次修订不改变 runtime V1 的冻结结论：
+本次修订把 runtime 从“用户手工补配置后再启动”收敛为“后端渲染配置、RM 执行启动”，冻结结论如下：
 
 - `runtimeId` 平台范围内全局唯一
 - RM internal 接口同步执行
 - 对用户侧仍由 Orchestrator 返回 `taskId`
 - 固定共享网络 `clawloops_shared`
+- LiteLLM 由平台后端共享启动，并以服务名 `litellm` 对多个 runtime 提供服务
 - `internalEndpoint = http://rt-<runtimeId>:18789`
 - `18789` 是唯一必检端口
 - `compat.openclawConfigDir / compat.openclawWorkspaceDir` 仍为必填
+- `openclaw.json` 由 Orchestrator 完整渲染，RM 只负责写盘与挂载
+- gateway token 默认长期有效，删除用户时失效
+- workspace 正式浏览器入口始终走平台 session 鉴权，不以 runtime 直连端口作为主路径
 
 ---
 
@@ -498,12 +521,14 @@ networks:
 - **首版不做通用改密与找回密码**
 - **非首登强制改密场景下，`admin` 登录后默认进入 `/admin`；普通用户登录后默认进入 `/app`；`workspace-entry` 只负责最终跳转与短时等待**
 - **Orchestrator 负责对外异步编排，RuntimeManager 负责对内同步执行**
-- **runtime V1 统一固定为 `clawloops_shared + 18789 + rt-<runtimeId> + compat 必填`**
+- **LiteLLM 由平台后端共享 stack 托管，runtime 只消费 `http://litellm:4000`**
+- **Orchestrator 负责渲染完整 `openclaw.json`，RuntimeManager 只写盘和挂载**
+- **runtime V2.2 统一固定为 `clawloops_shared + 18789 + rt-<runtimeId> + compat 必填 + 后端渲染配置`**
 
 这样既满足当前 MVP 的简单落地目标，也给后续扩展第三方登录留出清晰边界。
 
 ---
 
-v0.12-轻量认证修订
+v0.14-runtime
 reno  
-2026-03-25
+2026-03-27
