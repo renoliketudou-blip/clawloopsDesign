@@ -529,6 +529,37 @@ networks:
 
 ---
 
+## 15. 临时偏差补充（仅当前跑通实现）
+
+以下内容仅记录“当前为跑通链路而采取的临时实现”，与本文档主设计存在偏差，后续应回归主设计口径。
+
+### 15.1 workspace 入口形态的临时偏差
+
+- 设计口径要求 workspace 正式入口走 `Traefik + 平台 session 鉴权中间层`，不以 runtime 宿主机端口作为主路径。
+- 当前临时实现中，runtime-manager 返回的 `browserUrl` 仍是 `http://localhost:<hostPort>` 形式（容器 `18789` 端口映射到宿主机随机端口）。
+- 当前通过 `workspace-entry` 中转接口完成 307 跳转，但最终目标仍是上述 hostPort 直连地址，不是子域鉴权入口。
+
+### 15.2 OpenClaw 鉴权方式的临时偏差
+
+- 设计口径强调权限真相在平台 session，`browserUrl` 本身不作为权限边界。
+- 当前为保证可用，采用了 OpenClaw 网关 token 直带方案：`/chat?session=main#token=<gatewayToken>`。
+- 当前实现会在后端保留并拼接 token，确保 runtime 状态对账后不丢失该片段；该方案属于过渡期兼容，不是最终鉴权边界形态。
+
+### 15.3 控制台安全开关的临时偏差
+
+- 当前渲染的 `openclaw.json` 启用了：
+  - `gateway.controlUi.allowInsecureAuth=true`
+  - `gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback=true`
+  - `gateway.controlUi.dangerouslyDisableDeviceAuth=true`
+- 以上配置用于规避 `pairing required` 并快速打通控制台接入，属于明确的“危险开关”组合，不应作为长期生产基线。
+
+### 15.4 LiteLLM 凭据对齐的临时偏差
+
+- 当前共享 LiteLLM 使用 `LITELLM_MASTER_KEY`；runtime 渲染侧已改为注入同值以避免 `400 No connected db.`。
+- 这属于“先跑通”阶段的单密钥对齐策略，后续仍需回归为文档主线中的统一凭据治理（避免在多个组件间以环境变量硬耦合密钥语义）。
+
+---
+
 v0.14-runtime
 reno  
 2026-03-27
