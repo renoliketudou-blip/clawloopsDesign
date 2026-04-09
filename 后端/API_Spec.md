@@ -157,6 +157,11 @@
 | GET | `/api/v1/runtime/tasks/{taskId}` | 查询 runtime 任务状态 | 用户 / admin |
 | GET | `/api/v1/models` | 获取当前用户可见模型列表（只读） | 用户 |
 | GET | `/api/v1/workspace-entry` | 获取当前用户工作区入口（唯一工作区跳转入口） | 用户 |
+| GET | `/api/v1/files/list` | 获取容器内指定路径的文件列表 | 用户 |
+| GET | `/api/v1/files/read/{runtimeId}` | 读取容器内指定文件的内容 | 用户 |
+| POST | `/api/v1/files/write/{runtimeId}` | 写入内容到容器内指定文件 | 用户 |
+| POST | `/api/v1/files/upload` | 上传本地文件到容器内指定路径 | 用户 |
+| GET | `/api/v1/files/download/{runtimeId}` | 从容器内下载指定文件 | 用户 |
 | GET | `/api/v1/admin/home` | 获取管理后台首页摘要与待处理事项 | admin |
 | GET | `/api/v1/admin/users` | 获取用户列表 | admin |
 | GET | `/api/v1/admin/users/{userId}` | 获取用户详情 | admin |
@@ -174,6 +179,8 @@
 | POST | `/api/v1/admin/provider-credentials/{credentialId}/verify` | 校验平台 provider 凭据 | admin |
 | DELETE | `/api/v1/admin/provider-credentials/{credentialId}` | 删除平台 provider 凭据 | admin |
 | GET | `/api/v1/admin/usage/summary` | 获取管理侧 usage 汇总与趋势 | admin |
+| GET | `/api/v1/admin/user-files/:username/list` | 获取特定用户的文件列表 | admin |
+| DELETE | `/api/v1/admin/user-files/:username/delete` | 删除特定用户的文件 | admin |
 
 ---
 

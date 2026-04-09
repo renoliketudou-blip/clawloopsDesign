@@ -55,7 +55,7 @@
 | `invitation` | invitation 预览、接受、完成结果 | `/public/invitations/*` |
 | `workspace` | 用户是否已有 workspace、最终跳转状态 | `/workspace-entry` |
 | `runtime` | runtime 真相与轻量投影 | `/users/me/runtime`、`/users/me/runtime/status` |
-| `admin` | 用户治理、invitation 治理、模型治理、provider 凭据、usage | `/admin/*` |
+| `admin` | 用户治理、invitation 治理、模型治理、provider 凭据、usage、用户文件管理 | `/admin/*` |
 
 ---
 

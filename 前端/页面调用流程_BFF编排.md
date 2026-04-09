@@ -68,6 +68,7 @@ session 约束：
 | `/invite/:token` | invitation 接入页 | 公开 | `/api/v1/public/invitations/{token}` | `/accept` |
 | `/app` | 用户工作台 | 已登录且 allowed | `/auth/me`、`/auth/access`、`/users/me/runtime/status`、`/models` | start/stop/delete/open |
 | `/workspace-entry` | 工作区入口页 | 已登录且 allowed | `/auth/me`、`/auth/access`、`/workspace-entry` | 跳 workspace |
+| `/files` | 文件管理 | 已登录且 allowed | `/auth/me`、`/auth/access`、`/files/list` | 上传/下载/编辑/保存 |
 | `/admin` | 管理后台首页 | admin | `/auth/me`、`/auth/access`、`/admin/home` | 跳各后台子页 |
 | `/admin/users` | 用户列表页 | admin | `/auth/me`、`/auth/access`、`/admin/users` | 改用户状态 |
 | `/admin/users/:userId` | 用户详情页 | admin | `/auth/me`、`/auth/access`、`/admin/users/{userId}`、`/admin/users/{userId}/runtime` | 启停状态治理 |
@@ -75,6 +76,7 @@ session 约束：
 | `/admin/invitations/:invitationId` | invitation 详情页 | admin | `/auth/me`、`/auth/access`、`/admin/invitations/{invitationId}` | 撤销/重发 |
 | `/admin/models` | 模型治理页 | admin | `/auth/me`、`/auth/access`、`/admin/models` | 更新模型策略 |
 | `/admin/provider-credentials` | provider 凭据页 | admin | `/auth/me`、`/auth/access`、`/admin/provider-credentials` | 创建/验证/删除 |
+| `/admin/user-files/:username` | 用户文件列表 | admin | `/auth/me`、`/auth/access`、`/admin/user-files/:username/list` | 删除 |
 | `/admin/usage` | usage 汇总页 | admin | `/auth/me`、`/auth/access`、`/admin/usage/summary` | 刷新统计 |
 
 ---
@@ -232,6 +234,21 @@ session 约束：
 - `observedState` 只用于展示，不作为最终跳转依据
 - 用户若无合法 workspace，应回到 `/app` 的承接态
 - 跳转时不附加任何额外鉴权参数，workspace 子域访问权限完全依赖浏览器已持有的平台 session
+
+## 5.3 文件管理 `/files`
+
+初始化顺序：
+
+1. `GET /api/v1/auth/me`
+2. `GET /api/v1/auth/access`
+3. `GET /api/v1/files/list`
+
+用户操作：
+
+- 上传文件：`POST /api/v1/files/upload`
+- 下载文件：`GET /api/v1/files/download/{runtimeId}`
+- 读取文件内容：`GET /api/v1/files/read/{runtimeId}`
+- 保存文件：`POST /api/v1/files/write/{runtimeId}`
 
 ---
 

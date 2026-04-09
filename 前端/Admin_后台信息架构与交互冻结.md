@@ -40,6 +40,7 @@
 | `/admin/invitations/:invitationId` | invitation 详情 | 查看单条 invitation 详情，可与列表抽屉合并 |
 | `/admin/models` | 模型治理 | 模型开关与单项策略编辑 |
 | `/admin/provider-credentials` | provider 凭据治理 | 新增、验证、删除平台凭据 |
+| `/admin/user-files/:username` | 用户文件夹列表 | 管理用户的文件夹 |
 | `/admin/usage` | usage 汇总 | 全局 usage 只读查询 |
 
 冻结规则：
@@ -75,7 +76,8 @@
 3. 邀请管理
 4. 模型治理
 5. Provider 凭据
-6. Usage 汇总
+6. 用户文件管理
+7. Usage 汇总
 
 导航规则：
 
