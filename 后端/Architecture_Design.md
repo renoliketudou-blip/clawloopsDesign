@@ -560,6 +560,35 @@ networks:
 
 ---
 
-v0.14-runtime
+## 16. 公共区域能力增量设计（不改变既有主链路）
+
+为承接 `公共区域需求文档.md` 的新功能，本版在现有架构上新增“公共区域”能力，保持认证、invitation、runtime 主链路不变。
+
+核心设计：
+
+- 宿主机权威目录固定为 `/var/lib/clawloops/shared/public/files/`
+- `clawloops-api` 统一暴露 `/api/v1/public-area/*`
+- `clawloops-web` 新增用户页 `/public-area` 与管理页 `/admin/public-area`
+- `runtime-manager` 在容器启动阶段执行角色差异化策略：
+  - `user`：复制宿主机公共区域到容器私有副本，容器内改动不回写宿主机
+  - `admin`：将宿主机公共区域直挂到管理员容器工作区，容器内改动影响宿主机
+
+边界冻结：
+
+- 公共区域是“文件协作能力扩展”，不是认证能力扩展
+- 不新增任何外部身份依赖，不改变 session 真相边界
+- 不改变 runtime V2.2 的固定镜像、固定端口与 RM 同步执行器角色
+- 首版不提供在线编辑与在线预览，只提供目录浏览、上传、下载、创建目录、删除（admin）
+
+安全与权限：
+
+- `path` 仅允许公共根目录下相对路径，禁止路径穿越
+- `user` 仅可 list/mkdir/upload(download) 且 upload 不可覆盖
+- `admin` 允许覆盖上传与删除（目录仅允许空目录删除）
+- 前端完整路径展示仅用于可视化，不作为权限判定依据
+
+---
+
+v0.15-public-area
 reno  
-2026-03-27
+2026-04-10

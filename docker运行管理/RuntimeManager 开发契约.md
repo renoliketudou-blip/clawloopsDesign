@@ -284,6 +284,24 @@ gateway token 的平台语义冻结为：
 - 如需主动轮换，由 Orchestrator 生成新 token、重渲染 `openclaw.json` 并触发 runtime 重建或重启
 - RM 不得在日志、错误消息、label 中输出 token 明文
 
+### 4.7 公共区域挂载策略（增量能力）
+
+本节用于并入公共区域能力，不改变 RM 在 runtime V2.2 中的执行边界。
+
+冻结规则：
+
+- 宿主机公共区域根目录固定为 `/var/lib/clawloops/shared/public/files/`
+- `user runtime` 启动时：RM 需将公共区域复制到用户容器私有副本目录
+- `admin runtime` 启动时：RM 需将公共区域直挂到管理员容器工作区
+- `user` 在容器内对公共区域副本的变更不得回写宿主机
+- `admin` 在容器内对公共区域的变更可直接影响宿主机
+
+实现边界：
+
+- 公共区域复制/挂载属于容器启动准备动作
+- RM 仍不承担公共区域业务权限判断（权限判断在 `clawloops-api`）
+- 该能力不改变 RM 同步接口语义与错误码主集合
+
 ---
 
 ## 5. 状态契约与启动窗口

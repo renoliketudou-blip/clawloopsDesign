@@ -357,7 +357,39 @@ cookie 冻结口径：
 
 ---
 
-## 12. 最终契约结论
+## 12. 公共区域能力增量契约（不影响现有边界）
+
+本节用于并入公共区域能力，不改变既有认证、invitation、runtime V2.2 冻结结论。
+
+新增能力范围：
+
+- 公共区域浏览、创建目录、上传、下载、删除（admin）
+- 用户侧页面：`/public-area`
+- 管理侧页面：`/admin/public-area`
+- 后端前缀：`/api/v1/public-area/*`
+
+角色能力冻结：
+
+- `user`：`list / mkdir / upload / download`，其中 `upload` 强制 `overwrite=false`
+- `admin`：在 `user` 基础上增加 `overwrite upload` 与 `delete`
+- 删除目录仅允许空目录删除；删除非空目录返回冲突
+
+路径与排序冻结：
+
+- `path` 仅表示公共根目录下相对路径
+- 服务端统一规范化路径分隔符，禁止路径穿越与越界
+- 列表固定“目录优先 + 名称升序（不区分大小写）”
+- 分页固定 `pageSize=10`
+
+与 runtime-manager 的协同冻结：
+
+- `user runtime` 启动时复制公共区域到容器内副本，副本改动不回写宿主机
+- `admin runtime` 启动时直挂宿主机公共区域，容器内改动影响宿主机
+- 该能力是 runtime 启动策略扩展，不改变 RM 同步执行器定位
+
+---
+
+## 13. 最终契约结论
 
 本版 MVP 契约的核心不是“让外部 IAM 接管一切”，也不是“让 RuntimeManager 自己兜底所有补偿”，而是：
 
@@ -376,6 +408,6 @@ cookie 冻结口径：
 
 ---
 
-v0.14-runtime
+v0.15-public-area
 reno  
-2026-03-27
+2026-04-10
