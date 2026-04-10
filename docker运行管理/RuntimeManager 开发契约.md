@@ -292,9 +292,9 @@ gateway token 的平台语义冻结为：
 
 - 宿主机公共区域根目录固定为 `/var/lib/clawloops/shared/public/files/`
 - `user runtime` 启动时：RM 需将公共区域复制到用户容器私有副本目录
-- `admin runtime` 启动时：RM 需将公共区域直挂到管理员容器工作区
-- `user` 在容器内对公共区域副本的变更不得回写宿主机
-- `admin` 在容器内对公共区域的变更可直接影响宿主机
+- `admin runtime` 启动时：RM 也需将公共区域复制到管理员容器私有副本目录
+- 无论 `user/admin`，容器内（OpenClaw）对公共区域副本的变更都不得回写宿主机
+- 宿主机公共区写入影响仅允许通过工作台管理员管理接口产生，不由 RM 容器副本链路产生
 
 实现边界：
 

@@ -569,9 +569,9 @@ networks:
 - 宿主机权威目录固定为 `/var/lib/clawloops/shared/public/files/`
 - `clawloops-api` 统一暴露 `/api/v1/public-area/*`
 - `clawloops-web` 新增用户页 `/public-area` 与管理页 `/admin/public-area`
-- `runtime-manager` 在容器启动阶段执行角色差异化策略：
+- `runtime-manager` 在容器启动阶段统一执行“复制到容器副本”策略：
   - `user`：复制宿主机公共区域到容器私有副本，容器内改动不回写宿主机
-  - `admin`：将宿主机公共区域直挂到管理员容器工作区，容器内改动影响宿主机
+  - `admin`：同样复制到容器私有副本，容器内改动也不回写宿主机
 
 边界冻结：
 
@@ -584,7 +584,8 @@ networks:
 
 - `path` 仅允许公共根目录下相对路径，禁止路径穿越
 - `user` 仅可 list/mkdir/upload(download) 且 upload 不可覆盖
-- `admin` 允许覆盖上传与删除（目录仅允许空目录删除）
+- `admin` 在工作台管理入口允许覆盖上传与删除（目录仅允许空目录删除）
+- OpenClaw 入口中无论 `user/admin` 都只操作容器副本，不允许透传宿主机写权限
 - 前端完整路径展示仅用于可视化，不作为权限判定依据
 
 ---

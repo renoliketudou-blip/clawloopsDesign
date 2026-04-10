@@ -1230,10 +1230,14 @@
 - 禁止 `.` / `..` 段与任意路径穿越
 - `user` 不允许 `overwrite=true`，不允许 delete
 - 删除目录时仅允许空目录
+- 入口隔离：工作台公共区域管理入口与 OpenClaw 公共文件入口必须分离
+- OpenClaw 入口中无论 `user/admin` 都只允许操作容器副本，不得回写宿主机
+- 仅工作台管理员管理入口允许对宿主机公共区产生覆盖/删除影响
 
 错误码增量：
 
 - `403 ACCESS_DENIED`：`user` 尝试 overwrite / delete
+- `403 ACCESS_DENIED`：OpenClaw 入口尝试回写宿主机公共区
 - `409`：同名冲突且 `overwrite=false`
 - `409`：删除非空目录
 
