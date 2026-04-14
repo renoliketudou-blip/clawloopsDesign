@@ -27,6 +27,8 @@
 | invitation 预览 | `GET /api/v1/public/invitations/{token}` |
 | invitation 接受 | `POST /api/v1/public/invitations/{token}/accept` |
 | admin 首页 | `GET /api/v1/admin/home` |
+| 公共区域列表 | `GET /api/v1/public-area/files/list` |
+| 公共区域写操作 | `POST /api/v1/public-area/files/mkdir`、`POST /api/v1/public-area/files/upload`、`DELETE /api/v1/public-area/files/delete` |
 | runtime 最终跳转 | `GET /api/v1/workspace-entry` |
 | runtime 展示态 | `GET /api/v1/users/me/runtime/status` |
 | runtime 完整真相 | `GET /api/v1/users/me/runtime` |
@@ -46,16 +48,17 @@
 
 ### 2.3 前端统一状态切片
 
-前端状态树建议冻结为 6 个一级切片：
+前端状态树建议冻结为 7 个一级切片：
 
 | 切片 | 作用 | 主要来源 |
 | --- | --- | --- |
 | `session` | 当前是否已登录、当前用户信息 | `/auth/me` |
 | `access` | 当前登录用户是否允许继续访问业务 | `/auth/access` |
 | `invitation` | invitation 预览、接受、完成结果 | `/public/invitations/*` |
+| `publicArea` | 公共区域路径、分页、列表与动作态 | `/public-area/files/*` |
 | `workspace` | 用户是否已有 workspace、最终跳转状态 | `/workspace-entry` |
 | `runtime` | runtime 真相与轻量投影 | `/users/me/runtime`、`/users/me/runtime/status` |
-| `admin` | 用户治理、invitation 治理、模型治理、provider 凭据、usage | `/admin/*` |
+| `admin` | 用户治理、invitation 治理、模型治理、provider 凭据、usage、用户文件管理 | `/admin/*` |
 
 ---
 
@@ -250,6 +253,40 @@
 - 该结果只用于首登强制改密成功后的跳转
 - `redirectTo` 是唯一后续落点依据
 
+### 3.8 PublicAreaListResult
+
+```json
+{
+  "entries": [
+    {
+      "name": "docs",
+      "type": "directory",
+      "size": 0,
+      "updatedAt": "2026-04-10T09:30:00Z"
+    },
+    {
+      "name": "readme.pdf",
+      "type": "file",
+      "size": 102400,
+      "updatedAt": "2026-04-10T09:35:00Z"
+    }
+  ],
+  "page": 1,
+  "pageSize": 10,
+  "total": 21,
+  "totalPages": 3
+}
+```
+
+前端语义：
+
+- `entries` 为当前目录分页结果
+- 排序信任后端（目录优先、名称升序）
+- `pageSize` 首版固定为 10
+- 路径状态由路由 query `path/page` 承载
+- 路径栏展示完整绝对路径，但权限仍由后端判定
+- 入口隔离生效：OpenClaw 中无论 `user/admin` 仅操作容器副本；仅工作台管理员管理入口可影响宿主机
+
 ---
 
 ## 4. 页面级状态机
@@ -359,6 +396,26 @@
 - `readyToRedirect`
 - `error`
 
+## 4.8 `/public-area` 与 `/admin/public-area`
+
+状态：
+
+- `loadingList`
+- `listReady`
+- `submittingMkdir`
+- `submittingUpload`
+- `submittingDelete`
+- `conflict`
+- `forbidden`
+- `systemError`
+
+切换规则：
+
+- 首屏进入 `loadingList`，列表成功后进入 `listReady`
+- `overwrite=false` 同名冲突进入 `conflict`
+- 非 admin 触发覆盖上传/删除进入 `forbidden`
+- 回退越级由前端阻断，保持在 `listReady`
+
 ---
 
 ## 5. 路由守卫冻结
@@ -433,7 +490,8 @@
 3. invitation 接入在 `/invite/:token` 内完成闭环
 4. `/app` 承接首次接入成功确认
 5. `/workspace-entry` 只做最终跳转
-6. 首版不做通用改密与找回密码
+6. 公共区域状态由 `publicArea` 切片统一管理
+7. 首版不做通用改密与找回密码
 
 ---
 

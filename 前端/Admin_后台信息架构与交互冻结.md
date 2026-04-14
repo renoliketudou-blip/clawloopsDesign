@@ -34,12 +34,14 @@
 | 路由 | 页面定位 | 首版目标 |
 | --- | --- | --- |
 | `/admin` | 管理后台首页 | 平台治理摘要、待办事项、快捷入口 |
+| `/admin/public-area` | 公共区域管理 | 目录浏览、覆盖上传、删除与分页治理 |
 | `/admin/users` | 用户列表 | 快速查看用户状态与进入详情 |
 | `/admin/users/:userId` | 用户详情 | 查看用户资料、runtime 与启用/禁用 |
 | `/admin/invitations` | invitation 列表 | 创建、撤销、重发 invitation |
 | `/admin/invitations/:invitationId` | invitation 详情 | 查看单条 invitation 详情，可与列表抽屉合并 |
 | `/admin/models` | 模型治理 | 模型开关与单项策略编辑 |
 | `/admin/provider-credentials` | provider 凭据治理 | 新增、验证、删除平台凭据 |
+| `/admin/user-files/:username` | 用户文件夹列表 | 管理用户的文件夹 |
 | `/admin/usage` | usage 汇总 | 全局 usage 只读查询 |
 
 冻结规则：
@@ -71,11 +73,13 @@
 顺序冻结为：
 
 1. 管理首页
-2. 用户管理
-3. 邀请管理
-4. 模型治理
-5. Provider 凭据
-6. Usage 汇总
+2. 公共区域管理
+3. 用户管理
+4. 邀请管理
+5. 模型治理
+6. Provider 凭据
+7. 用户文件管理
+8. Usage 汇总
 
 导航规则：
 
@@ -135,6 +139,18 @@
 - 用户列表页展示 `username / role / status`
 - 用户详情页展示用户基础信息、runtime 信息、启用禁用操作
 - disabled 后用户应在最短时间内失去业务访问权限
+
+---
+
+### 6.4 公共区域治理
+
+- 管理员通过 `/admin/public-area` 管理共享文件目录
+- 页面初始化与用户侧公共区域共用 `GET /api/v1/public-area/files/list`
+- 后台允许执行 `overwrite upload` 与 `delete`
+- 删除目录只允许空目录，删除非空目录需给出冲突提示
+- 路径栏需展示完整服务器绝对路径
+- 回退越界必须阻断并提示“不允许再回退”
+- 宿主机公共区影响范围仅限该后台管理入口；admin 在 OpenClaw 中同类操作不影响宿主机
 
 ---
 

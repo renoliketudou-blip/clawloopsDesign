@@ -157,6 +157,11 @@
 | GET | `/api/v1/runtime/tasks/{taskId}` | 查询 runtime 任务状态 | 用户 / admin |
 | GET | `/api/v1/models` | 获取当前用户可见模型列表（只读） | 用户 |
 | GET | `/api/v1/workspace-entry` | 获取当前用户工作区入口（唯一工作区跳转入口） | 用户 |
+| GET | `/api/v1/files/list` | 获取容器内指定路径的文件列表 | 用户 |
+| GET | `/api/v1/files/read/{runtimeId}` | 读取容器内指定文件的内容 | 用户 |
+| POST | `/api/v1/files/write/{runtimeId}` | 写入内容到容器内指定文件 | 用户 |
+| POST | `/api/v1/files/upload` | 上传本地文件到容器内指定路径 | 用户 |
+| GET | `/api/v1/files/download/{runtimeId}` | 从容器内下载指定文件 | 用户 |
 | GET | `/api/v1/admin/home` | 获取管理后台首页摘要与待处理事项 | admin |
 | GET | `/api/v1/admin/users` | 获取用户列表 | admin |
 | GET | `/api/v1/admin/users/{userId}` | 获取用户详情 | admin |
@@ -174,6 +179,8 @@
 | POST | `/api/v1/admin/provider-credentials/{credentialId}/verify` | 校验平台 provider 凭据 | admin |
 | DELETE | `/api/v1/admin/provider-credentials/{credentialId}` | 删除平台 provider 凭据 | admin |
 | GET | `/api/v1/admin/usage/summary` | 获取管理侧 usage 汇总与趋势 | admin |
+| GET | `/api/v1/admin/user-files/:username/list` | 获取特定用户的文件列表 | admin |
+| DELETE | `/api/v1/admin/user-files/:username/delete` | 删除特定用户的文件 | admin |
 
 ---
 
@@ -1198,7 +1205,52 @@
 
 ---
 
-## 11. 最终接口基线结论
+## 11. 公共区域增量接口（MVP 扩展）
+
+本节是对现有接口基线的**增量补充**，不改变已冻结的认证、invitation、runtime 编排语义。
+
+统一前缀：
+
+- `/api/v1/public-area/*`
+
+接口清单：
+
+| 方法 | 路径 | 用途 | user | admin |
+| --- | --- | --- | --- | --- |
+| GET | `/api/v1/public-area/files/list` | 按目录分页列出公共区域文件与目录 | ✅ | ✅ |
+| POST | `/api/v1/public-area/files/mkdir` | 在公共区域创建目录 | ✅ | ✅ |
+| POST | `/api/v1/public-area/files/upload` | 上传文件到公共区域；`user` 强制不覆盖，`admin` 可覆盖 | ✅ | ✅ |
+| GET | `/api/v1/public-area/files/download` | 下载公共区域文件 | ✅ | ✅ |
+| DELETE | `/api/v1/public-area/files/delete` | 删除文件或空目录 | ❌ | ✅ |
+
+分页与排序：
+
+- 默认 `page=1`
+- `pageSize=10`（首版固定）
+- 返回 `entries, page, pageSize, total, totalPages`
+- 列表排序统一为“目录优先，再按名称不区分大小写升序”
+
+路径与权限冻结规则：
+
+- 入参 `path` 是公共区域根目录下相对路径
+- 服务端需将 `\` 统一规范化为 `/`
+- 禁止 `.` / `..` 段与任意路径穿越
+- `user` 不允许 `overwrite=true`，不允许 delete
+- 删除目录时仅允许空目录
+- 入口隔离：工作台公共区域管理入口与 OpenClaw 公共文件入口必须分离
+- OpenClaw 入口中无论 `user/admin` 都只允许操作容器副本，不得回写宿主机
+- 仅工作台管理员管理入口允许对宿主机公共区产生覆盖/删除影响
+
+错误码增量：
+
+- `403 ACCESS_DENIED`：`user` 尝试 overwrite / delete
+- `403 ACCESS_DENIED`：OpenClaw 入口尝试回写宿主机公共区
+- `409`：同名冲突且 `overwrite=false`
+- `409`：删除非空目录
+
+---
+
+## 12. 最终接口基线结论
 
 接口层面的关键冻结如下：
 
@@ -1215,6 +1267,6 @@
 
 ---
 
-v0.14-runtime
+v0.15-public-area
 reno  
-2026-03-27
+2026-04-10

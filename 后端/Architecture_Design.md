@@ -7,7 +7,7 @@
 | 适用范围 | 单机部署、多用户访问、容器级隔离、统一模型网关、业务内轻量认证 |
 | 本版重点 | 冻结登录与邀请接入链路、统一 session 校验边界、删除外部 IAM 依赖、补充种子管理员首登强制改密，并把 runtime 收敛为 V2.2：后端渲染配置、RM 只执行 |
 | 关联文档 | 《MVP 开发基线总契约》《MVP 统一总接口》《RuntimeManager 开发契约》《轻量认证实施文档》 |
-| 当前版本 | v0.14-runtime-v2.2 |
+| 当前版本 | v0.15-runtime-v2.2 |
 
 ---
 
@@ -46,6 +46,9 @@
 5. 用户进入平台后，继续按既有设计使用个人 runtime 工作区
 6. workspace 入口统一由 Traefik 暴露，但访问权限由平台 session 校验决定
 7. 平台仍坚持“管理员提供服务、用户只使用”的团队平台模式
+8. 提供容器内文件的浏览、创建、编辑、保存功能，支持本地文件与容器文件的双向交互
+9. 为普通用户创建工作区后在服务器本地生成以用户名为名的文件夹，存储用户文件，确保容器消失后文件得以保留
+10. 为管理员用户提供删除和可视化所有普通用户文件夹列表的功能
 
 MVP 仍然不追求：
 
@@ -69,6 +72,8 @@ MVP 仍然不追求：
 | 密码扩展 | 首版仅支持种子管理员首登强制改密，不做找回密码 |
 | runtime V2.2 | 固定镜像、固定内部端口、固定网络、固定 alias、`compat` 必填、后端渲染 `openclaw.json` |
 | 外部身份源 | 后续扩展，不在首版启用 |
+| 个人空间文档操作 | 提供容器内文件的浏览、创建、编辑、保存功能，支持本地文件与容器文件的双向交互 |
+| 用户文件存储与管理 | 为普通用户创建工作区后在服务器本地生成以用户名为名的文件夹，存储用户文件，确保容器消失后文件得以保留，为管理员用户提供删除和可视化所有普通用户文件夹的功能 |
 
 ---
 
@@ -156,12 +161,13 @@ MVP 仍然不追求：
 
 | 组件 | 职责 |
 | --- | --- |
-| `clawloops-api` | 登录、session、invitation、用户同步、membership 绑定、权限判断 |
-| `clawloops-web` | 登录页、邀请接入页、用户工作台、管理后台 |
+| `clawloops-api` | 登录、session、invitation、用户同步、membership 绑定、权限判断、文件操作 API、用户文件管理 API |
+| `clawloops-web` | 登录页、邀请接入页、用户工作台、管理后台、文件管理、用户文件管理界面 |
 | `traefik` | 主域与 workspace 子域统一入口 |
 | `litellm` | 平台共享模型网关，由后端共享 stack 启动，为多个 runtime 提供一对多代理能力 |
-| `runtime-manager` | 同步执行容器动作、目录初始化、写入 `openclaw.json`、绑定共享网络并返回容器事实状态 |
+| `runtime-manager` | 同步执行容器动作、目录初始化、写入 `openclaw.json`、绑定共享网络并返回容器事实状态、执行容器内文件操作 |
 | `workspace auth middleware` | 基于平台 session 校验 workspace 子域访问权限 |
+| `file-storage-manager` | 管理服务器本地文件存储，为用户创建目录，存储用户文件 |
 
 这里的 `workspace auth middleware` 可以是：
 
@@ -379,6 +385,7 @@ cookie 冻结规则：
 - `/admin/*` 只允许 `admin`
 - 当 `mustChangePassword=true` 时，`/force-password-change` 是唯一允许进入的已登录页面
 - `/app`、`/workspace-entry` 只允许已登录且 `allowed=true`
+- `/files`、`/files/edit/:path` 只允许已登录且 `allowed=true`，用于容器内文件操作
 - disabled 用户不能继续进入业务页面
 
 ### 8.2 workspace 访问规则
@@ -411,9 +418,9 @@ cookie 冻结规则：
 | 模块 2：租户与用户资源控制 | 维护 User / Invitation / WorkspaceMembership / UserRuntimeBinding 真相；负责 invitation 消费与 binding 初始化 |
 | 模块 3：Runtime 编排 | 只在用户已通过认证且业务绑定合法的前提下处理 runtime 启停删；对外返回异步 task；对内调用 RM 的同步 internal API |
 | 模块 4：模型接入、平台凭据代理与用量归集 | 与认证解耦，不处理密码与 invitation，只处理模型治理 |
-| 模块 5：管理后台 | 负责 invitation 创建、查看、撤销、用户治理、runtime 查看，并作为 `admin` 登录后的默认首页 |
-| 模块 6：用户工作台 | 负责普通用户登录后的工作台承接、runtime 状态展示与 `workspace-entry` 跳转 |
-| RuntimeManager | 同步执行容器动作、目录初始化、挂载、网络接入、事实状态查询；不维护外层任务状态机 |
+| 模块 5：管理后台 | 负责 invitation 创建、查看、撤销、用户治理、runtime 查看、用户文件管理，并作为 `admin` 登录后的默认首页 |
+| 模块 6：用户工作台 | 负责普通用户登录后的工作台承接、runtime 状态展示、文件管理入口与 `workspace-entry` 跳转 |
+| RuntimeManager | 同步执行容器动作、目录初始化、挂载、网络接入、事实状态查询、执行容器内文件操作；不维护外层任务状态机 |
 
 ---
 
@@ -463,7 +470,14 @@ networks:
 - workspace 鉴权中间层必须能访问平台认证校验接口
 - 主域名与 workspace 子域名必须共用可验证的平台 session
 
-### 11.3 runtime 与 LiteLLM 部署要求
+### 11.3 文件存储部署要求
+
+- 服务器需要有足够的存储空间来存储用户文件
+- 确保应用程序有足够的权限在服务器本地创建和管理文件夹
+- 配置用户文件的存储位置，默认为 `/path/to/storage/users/{username}`
+- 配置单个文件的大小限制和每个用户的存储配额，默认文件最大为400mb,存储配额3G
+
+### 11.4 runtime 与 LiteLLM 部署要求
 
 - `litellm` 必须放在平台后端共享 compose / stack 中统一启动
 - `litellm` 必须以服务名 `litellm` 加入 `clawloops_shared`
@@ -560,6 +574,36 @@ networks:
 
 ---
 
-v0.14-runtime
+## 16. 公共区域能力增量设计（不改变既有主链路）
+
+为承接 `公共区域需求文档.md` 的新功能，本版在现有架构上新增“公共区域”能力，保持认证、invitation、runtime 主链路不变。
+
+核心设计：
+
+- 宿主机权威目录固定为 `/var/lib/clawloops/shared/public/files/`
+- `clawloops-api` 统一暴露 `/api/v1/public-area/*`
+- `clawloops-web` 新增用户页 `/public-area` 与管理页 `/admin/public-area`
+- `runtime-manager` 在容器启动阶段统一执行“复制到容器副本”策略：
+  - `user`：复制宿主机公共区域到容器私有副本，容器内改动不回写宿主机
+  - `admin`：同样复制到容器私有副本，容器内改动也不回写宿主机
+
+边界冻结：
+
+- 公共区域是“文件协作能力扩展”，不是认证能力扩展
+- 不新增任何外部身份依赖，不改变 session 真相边界
+- 不改变 runtime V2.2 的固定镜像、固定端口与 RM 同步执行器角色
+- 首版不提供在线编辑与在线预览，只提供目录浏览、上传、下载、创建目录、删除（admin）
+
+安全与权限：
+
+- `path` 仅允许公共根目录下相对路径，禁止路径穿越
+- `user` 仅可 list/mkdir/upload(download) 且 upload 不可覆盖
+- `admin` 在工作台管理入口允许覆盖上传与删除（目录仅允许空目录删除）
+- OpenClaw 入口中无论 `user/admin` 都只操作容器副本，不允许透传宿主机写权限
+- 前端完整路径展示仅用于可视化，不作为权限判定依据
+
+---
+
+v0.15-public-area
 reno  
-2026-03-27
+2026-04-10
