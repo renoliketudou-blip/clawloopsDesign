@@ -69,7 +69,9 @@ session 约束：
 | `/app` | 用户工作台 | 已登录且 allowed | `/auth/me`、`/auth/access`、`/users/me/runtime/status`、`/models` | start/stop/delete/open |
 | `/workspace-entry` | 工作区入口页 | 已登录且 allowed | `/auth/me`、`/auth/access`、`/workspace-entry` | 跳 workspace |
 | `/files` | 文件管理 | 已登录且 allowed | `/auth/me`、`/auth/access`、`/files/list` | 上传/下载/编辑/保存 |
+| `/public-area` | 公共区域页（用户） | 已登录且 allowed | `/auth/me`、`/auth/access`、`/public-area/files/list` | mkdir/upload/download/page |
 | `/admin` | 管理后台首页 | admin | `/auth/me`、`/auth/access`、`/admin/home` | 跳各后台子页 |
+| `/admin/public-area` | 公共区域管理页（管理员） | admin | `/auth/me`、`/auth/access`、`/public-area/files/list` | mkdir/upload(overwrite)/download/delete/page |
 | `/admin/users` | 用户列表页 | admin | `/auth/me`、`/auth/access`、`/admin/users` | 改用户状态 |
 | `/admin/users/:userId` | 用户详情页 | admin | `/auth/me`、`/auth/access`、`/admin/users/{userId}`、`/admin/users/{userId}/runtime` | 启停状态治理 |
 | `/admin/invitations` | invitation 列表页 | admin | `/auth/me`、`/auth/access`、`/admin/invitations` | 创建/撤销/重发 |
@@ -291,6 +293,53 @@ session 约束：
 
 ---
 
+## 6.3 `/public-area`（用户）
+
+初始化顺序：
+
+1. `GET /api/v1/auth/me`
+2. `GET /api/v1/auth/access`
+3. `GET /api/v1/public-area/files/list?path=<path>&page=<n>`
+
+动作编排：
+
+- 创建目录：`POST /api/v1/public-area/files/mkdir`
+- 上传：`POST /api/v1/public-area/files/upload`（固定 `overwrite=false`）
+- 下载：`GET /api/v1/public-area/files/download`
+- 翻页：更新 `page` 并重新请求 `list`
+- 目录切换：更新 `path` 并重置 `page=1`
+
+页面规则：
+
+- 完整路径必须显示为服务器绝对路径
+- 点击返回上级若越过公共区域根目录，阻断并提示“不允许再回退”
+- 不显示覆盖上传与删除入口
+- 该入口与 OpenClaw 公共文件入口语义一致：用户操作仅作用容器副本，不回写宿主机
+
+## 6.4 `/admin/public-area`（管理员）
+
+初始化顺序：
+
+1. `GET /api/v1/auth/me`
+2. `GET /api/v1/auth/access`
+3. `GET /api/v1/public-area/files/list?path=<path>&page=<n>`
+
+动作编排：
+
+- 创建目录：`POST /api/v1/public-area/files/mkdir`
+- 上传：`POST /api/v1/public-area/files/upload`（可传 `overwrite=true`）
+- 下载：`GET /api/v1/public-area/files/download`
+- 删除：`DELETE /api/v1/public-area/files/delete`
+- 翻页与目录切换规则同用户页
+
+页面规则：
+
+- 仅 admin 可见删除与覆盖上传动作
+- 删除非空目录时展示冲突错误并保持当前列表态
+- 仅该工作台管理员入口允许影响宿主机公共区；admin 在 OpenClaw 的同类操作仍只作用容器副本
+
+---
+
 ## 7. 页面级错误收口
 
 ### 7.1 登录页
@@ -318,6 +367,14 @@ session 约束：
 - `UNAUTHENTICATED`：回 `/login`
 - `USER_DISABLED`：进入 `/disabled`
 - `ACCESS_DENIED`：进入 `/403`
+
+### 7.5 公共区域页
+
+- `ACCESS_DENIED`：用户尝试覆盖上传或删除时提示权限不足
+- `ACCESS_DENIED`：OpenClaw 入口尝试回写宿主机公共区时提示权限不足
+- `409`：同名冲突（`overwrite=false`）提示重命名或改为覆盖上传（admin）
+- `409`：删除非空目录提示“仅支持删除空目录”
+- 路径越界回退：前端本地阻断并提示“不允许再回退”
 
 ---
 
